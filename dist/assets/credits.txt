@@ -1,0 +1,6 @@
+示例猫图片：Cat portrait (17236370444).jpg
+作者：Roy Tanck
+来源：https://commons.wikimedia.org/wiki/File:Cat_portrait_(17236370444).jpg
+授权：CC0 1.0 Public Domain Dedication
+https://creativecommons.org/publicdomain/zero/1.0/
+示例仅用于快速试做。你可以用自己的猫素材替换。
