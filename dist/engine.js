@@ -1,7 +1,7 @@
 export const dimensions = { '9:16': [540, 960], '1:1': [720, 720], '16:9': [960, 540] };
 export const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 export function createScene(asset, index = 0) {
-  return { id: crypto.randomUUID(), asset, top: index ? '我：只是随便看看' : '当我发现我的 CP', bottom: index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', style: 'meme', font: 48, x: .5, y: .5, scale: 1, topX: .5, topY: .1, bottomX: .5, bottomY: .86, animation: 'zoom', transition: 'fade', background: '#f9a8d4' };
+  return { id: crypto.randomUUID(), asset, assetId: null, duration: asset.kind === 'video' ? asset.duration : 4, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, backgroundId: null, backgroundAsset: null, chroma: false, chromaStrength: 40, flip: false, top: index ? '我：只是随便看看' : '当我发现我的 CP', bottom: index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', style: 'meme', font: 48, x: .5, y: .5, scale: 1, topX: .5, topY: .1, bottomX: .5, bottomY: .86, animation: 'zoom', transition: 'fade', background: '#f9a8d4' };
 }
 function waitFor(element, event, fail = 'error') {
   return new Promise((resolve, reject) => {
@@ -14,7 +14,7 @@ function waitFor(element, event, fail = 'error') {
 }
 export async function loadAsset(fileOrUrl, name = '示例猫猫') {
   const file = typeof fileOrUrl !== 'string' ? fileOrUrl : null;
-  if (file && file.size > 30 * 1024 * 1024) throw new Error('猫猫太大只啦！单个素材请控制在 30 MB 以内。');
+  if (file && file.size > 200 * 1024 * 1024) throw new Error('单个素材请控制在 200 MB 以内；大文件可以先压缩再导入。');
   const type = file?.type || 'image/jpeg';
   if (file && !/^(image\/|video\/)/.test(type)) throw new Error('请上传图片、GIF 或短视频素材。');
   const url = file ? URL.createObjectURL(file) : fileOrUrl;
@@ -46,7 +46,6 @@ export async function loadAsset(fileOrUrl, name = '示例猫猫') {
       element = document.createElement('video'); element.muted = true; element.playsInline = true; element.preload = 'auto'; element.loop = true;
       const ready = waitFor(element, 'loadeddata'); element.src = url; element.load(); await ready;
       if (!Number.isFinite(element.duration) || element.duration <= 0) throw new Error('无法确定视频时长，请换一份完整的视频文件。');
-      if (element.duration > 120) throw new Error('开场不用这么长哦，请上传 2 分钟以内的视频。');
       if (element.videoWidth * element.videoHeight > 8_300_000) throw new Error('视频分辨率过大，请先压缩到 4K 以内。');
       return { kind: 'video', name: file.name, url, element, width: element.videoWidth, height: element.videoHeight, duration: element.duration, release() { element.pause(); element.removeAttribute('src'); element.load(); URL.revokeObjectURL(url); } };
     }
@@ -56,13 +55,17 @@ export async function loadAsset(fileOrUrl, name = '示例猫猫') {
   } catch (error) { frames.forEach(f => f.bitmap.close()); if (element?.tagName === 'VIDEO') { element.pause(); element.removeAttribute('src'); element.load(); } if (file) URL.revokeObjectURL(url); throw error; }
 }
 export function timelineAt(time, duration, scenes) {
-  const length = duration / scenes.length;
-  const index = Math.min(scenes.length - 1, Math.floor(Math.max(0, time) / length));
-  const local = Math.max(0, time - index * length);
+  let index = 0, start = 0;
+  while (index < scenes.length - 1 && time >= start + scenes[index].duration) { start += scenes[index].duration; index++; }
+  const length = scenes[index].duration;
+  const local = clamp(time - start, 0, length);
   const overlap = Math.min(.35, length * .2);
   const transitioning = index < scenes.length - 1 && scenes[index].transition !== 'cut' && local > length - overlap;
-  return { index, local, length, progress: transitioning ? clamp((local - length + overlap) / overlap, 0, 1) : 0 };
+  return { index, local, length, start, progress: transitioning ? clamp((local - length + overlap) / overlap, 0, 1) : 0 };
 }
+export function sceneStart(scenes, index) { return scenes.slice(0, index).reduce((sum, scene) => sum + scene.duration, 0); }
+export function totalDuration(scenes) { return scenes.reduce((sum, scene) => sum + scene.duration, 0); }
+export function sourceTime(scene, local) { const start = scene.trimStart || 0, end = scene.trimEnd || scene.asset.duration || scene.duration, length = Math.max(.01, end - start); return start + (scene.loop ? Math.max(0, local) % length : Math.min(Math.max(0, local), Math.max(0, length - .025))); }
 function frameFor(asset, time) {
   if (asset.kind !== 'gif') return asset.element;
   const t = time % asset.duration;
@@ -102,27 +105,37 @@ function drawCaption(ctx, scene, key, width, height) {
   ctx.strokeStyle = '#181018'; ctx.lineWidth = Math.max(2, layout.size * .11); ctx.fillStyle = scene.style === 'yellow' ? '#ffe23e' : '#ffffff';
   layout.lines.forEach((line, i) => { if (scene.style !== 'box') ctx.strokeText(line, layout.x, layout.y + i * layout.lineHeight); ctx.fillText(line, layout.x, layout.y + i * layout.lineHeight); }); ctx.restore();
 }
-function drawScene(ctx, scene, local, width, height) {
+export function keyGreenPixels(data, strength) {
+  const threshold = 75 - clamp(strength, 0, 100) * .6;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i], g = data[i+1], b = data[i+2], dominance = g - Math.max(r, b);
+    if (g > 50 && dominance > threshold) { const alpha = 1 - clamp((dominance - threshold) / 35, 0, 1); data[i+3] = Math.round(data[i+3] * alpha); if (alpha > 0) data[i+1] = Math.min(g, Math.max(r,b) + threshold); }
+  }
+}
+function drawScene(ctx, scene, local, width, height, fx) {
   ctx.fillStyle = scene.background; ctx.fillRect(0, 0, width, height);
+  if (scene.backgroundAsset) { const bg=scene.backgroundAsset, cover=Math.max(width/bg.width,height/bg.height); ctx.drawImage(bg.element,(width-bg.width*cover)/2,(height-bg.height*cover)/2,bg.width*cover,bg.height*cover); }
   const p = clamp(local / .55, 0, 1);
   let scale = 1, offsetX = 0, offsetY = 0;
   if (scene.animation === 'zoom') scale = 1 + .07 * clamp(local / 3, 0, 1);
   if (scene.animation === 'shake' && p < 1) { offsetX = Math.sin(local * 85) * width * .016 * (1 - p); offsetY = Math.cos(local * 64) * height * .008 * (1 - p); }
   if (scene.animation === 'pop') { const q = p - 1; scale = 1 + 2.70158 * q ** 3 + 1.70158 * q ** 2; offsetY = (1 - p) * height * .12; }
   const bounds = mediaBounds(scene, width, height);
-  ctx.save(); ctx.translate(scene.x * width + offsetX, scene.y * height + offsetY); ctx.scale(scale, scale);
-  ctx.drawImage(frameFor(scene.asset, local), -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
+  let source = frameFor(scene.asset, sourceTime(scene, local));
+  if (scene.chroma) { const fit=Math.min(1,720/Math.max(scene.asset.width,scene.asset.height)); const fw=Math.max(1,Math.round(scene.asset.width*fit)),fh=Math.max(1,Math.round(scene.asset.height*fit)); if(fx.width!==fw||fx.height!==fh){fx.width=fw;fx.height=fh;}const fctx=fx.getContext('2d',{willReadFrequently:true});fctx.clearRect(0,0,fw,fh);fctx.drawImage(source,0,0,fw,fh);const pixels=fctx.getImageData(0,0,fw,fh);keyGreenPixels(pixels.data,scene.chromaStrength);fctx.putImageData(pixels,0,0);source=fx; }
+  ctx.save(); ctx.translate(scene.x * width + offsetX, scene.y * height + offsetY); ctx.scale(scene.flip ? -scale : scale, scale);
+  ctx.drawImage(source, -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
   drawCaption(ctx, scene, 'top', width, height); drawCaption(ctx, scene, 'bottom', width, height);
 }
 export class Renderer {
-  constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.buffer = document.createElement('canvas'); this.bufferCtx = this.buffer.getContext('2d'); }
+  constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.buffer = document.createElement('canvas'); this.bufferCtx = this.buffer.getContext('2d'); this.fx=document.createElement('canvas'); }
   render(state, time) {
     const { width: w, height: h } = this.canvas, ctx = this.ctx;
     const at = timelineAt(time, state.duration, state.scenes), scene = state.scenes[at.index];
-    ctx.clearRect(0, 0, w, h); drawScene(ctx, scene, at.local, w, h);
+    ctx.clearRect(0, 0, w, h); drawScene(ctx, scene, at.local, w, h, this.fx);
     if (at.progress > 0) {
       if (this.buffer.width !== w || this.buffer.height !== h) { this.buffer.width = w; this.buffer.height = h; }
-      drawScene(this.bufferCtx, state.scenes[at.index + 1], 0, w, h);
+      drawScene(this.bufferCtx, state.scenes[at.index + 1], 0, w, h, this.fx);
       ctx.save();
       if (scene.transition === 'fade') { ctx.globalAlpha = at.progress; ctx.drawImage(this.buffer, 0, 0); }
       if (scene.transition === 'slide') { ctx.drawImage(this.buffer, w * (1 - at.progress), 0); }
