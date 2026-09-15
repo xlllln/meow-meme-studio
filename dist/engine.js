@@ -1,7 +1,10 @@
 export const dimensions = { '9:16': [540, 960], '1:1': [720, 720], '16:9': [960, 540] };
 export const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+export function createCat(asset, assetId = null) {
+  return { id: crypto.randomUUID(), asset, assetId, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, chroma: false, chromaStrength: 40, flip: false, x: .5, y: .5, scale: 1, animation: 'zoom' };
+}
 export function createScene(asset, index = 0) {
-  return { id: crypto.randomUUID(), asset, assetId: null, duration: asset.kind === 'video' ? asset.duration : 4, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, backgroundId: null, backgroundAsset: null, chroma: false, chromaStrength: 40, flip: false, top: index ? '我：只是随便看看' : '当我发现我的 CP', bottom: index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', style: 'meme', font: 48, x: .5, y: .5, scale: 1, topX: .5, topY: .1, bottomX: .5, bottomY: .86, animation: 'zoom', transition: 'fade', background: '#f9a8d4' };
+  return { id: crypto.randomUUID(), cats: [createCat(asset)], duration: asset.kind === 'video' ? asset.duration : 4, backgroundId: null, backgroundAsset: null, top: index ? '我：只是随便看看' : '当我发现我的 CP', bottom: index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', style: 'meme', font: 48, topX: .5, topY: .1, bottomX: .5, bottomY: .86, transition: 'fade', background: '#f9a8d4' };
 }
 function waitFor(element, event, fail = 'error') {
   return new Promise((resolve, reject) => {
@@ -65,16 +68,16 @@ export function timelineAt(time, duration, scenes) {
 }
 export function sceneStart(scenes, index) { return scenes.slice(0, index).reduce((sum, scene) => sum + scene.duration, 0); }
 export function totalDuration(scenes) { return scenes.reduce((sum, scene) => sum + scene.duration, 0); }
-export function sourceTime(scene, local) { const start = scene.trimStart || 0, end = scene.trimEnd || scene.asset.duration || scene.duration, length = Math.max(.01, end - start); return start + (scene.loop ? Math.max(0, local) % length : Math.min(Math.max(0, local), Math.max(0, length - .025))); }
+export function sourceTime(cat, local) { const start = cat.trimStart || 0, end = cat.trimEnd || cat.asset.duration || 4, length = Math.max(.01, end - start); return start + (cat.loop ? Math.max(0, local) % length : Math.min(Math.max(0, local), Math.max(0, length - .025))); }
 function frameFor(asset, time) {
   if (asset.kind !== 'gif') return asset.element;
   const t = time % asset.duration;
   return (asset.frames.find(f => t < f.start + f.duration) || asset.frames.at(-1)).bitmap;
 }
-export function mediaBounds(scene, width, height) {
-  const fit = Math.min(width / scene.asset.width, height / scene.asset.height) * scene.scale;
-  const w = scene.asset.width * fit, h = scene.asset.height * fit;
-  return { x: scene.x * width - w / 2, y: scene.y * height - h / 2, w, h };
+export function mediaBounds(cat, width, height) {
+  const fit = Math.min(width / cat.asset.width, height / cat.asset.height) * cat.scale;
+  const w = cat.asset.width * fit, h = cat.asset.height * fit;
+  return { x: cat.x * width - w / 2, y: cat.y * height - h / 2, w, h };
 }
 function wrappedLines(ctx, text, maxWidth) {
   const result = [];
@@ -112,19 +115,23 @@ export function keyGreenPixels(data, strength) {
     if (g > 50 && dominance > threshold) { const alpha = 1 - clamp((dominance - threshold) / 35, 0, 1); data[i+3] = Math.round(data[i+3] * alpha); if (alpha > 0) data[i+1] = Math.min(g, Math.max(r,b) + threshold); }
   }
 }
+function drawCat(ctx, cat, local, width, height, fx) {
+  const sourceAsset = cat.asset;
+  const p = clamp(local / .55, 0, 1);
+  let scale = 1, offsetX = 0, offsetY = 0;
+  if (cat.animation === 'zoom') scale = 1 + .07 * clamp(local / 3, 0, 1);
+  if (cat.animation === 'shake' && p < 1) { offsetX = Math.sin(local * 85) * width * .016 * (1 - p); offsetY = Math.cos(local * 64) * height * .008 * (1 - p); }
+  if (cat.animation === 'pop') { const q = p - 1; scale = 1 + 2.70158 * q ** 3 + 1.70158 * q ** 2; offsetY = (1 - p) * height * .12; }
+  const bounds = mediaBounds(cat, width, height);
+  let source = frameFor(sourceAsset, sourceTime(cat, local));
+  if (cat.chroma) { const fit=Math.min(1,720/Math.max(sourceAsset.width,sourceAsset.height)); const fw=Math.max(1,Math.round(sourceAsset.width*fit)),fh=Math.max(1,Math.round(sourceAsset.height*fit)); if(fx.width!==fw||fx.height!==fh){fx.width=fw;fx.height=fh;}const fctx=fx.getContext('2d',{willReadFrequently:true});fctx.clearRect(0,0,fw,fh);fctx.drawImage(source,0,0,fw,fh);const pixels=fctx.getImageData(0,0,fw,fh);keyGreenPixels(pixels.data,cat.chromaStrength);fctx.putImageData(pixels,0,0);source=fx; }
+  ctx.save(); ctx.translate(cat.x * width + offsetX, cat.y * height + offsetY); ctx.scale(cat.flip ? -scale : scale, scale);
+  ctx.drawImage(source, -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
+}
 function drawScene(ctx, scene, local, width, height, fx) {
   ctx.fillStyle = scene.background; ctx.fillRect(0, 0, width, height);
   if (scene.backgroundAsset) { const bg=scene.backgroundAsset, cover=Math.max(width/bg.width,height/bg.height); ctx.drawImage(bg.element,(width-bg.width*cover)/2,(height-bg.height*cover)/2,bg.width*cover,bg.height*cover); }
-  const p = clamp(local / .55, 0, 1);
-  let scale = 1, offsetX = 0, offsetY = 0;
-  if (scene.animation === 'zoom') scale = 1 + .07 * clamp(local / 3, 0, 1);
-  if (scene.animation === 'shake' && p < 1) { offsetX = Math.sin(local * 85) * width * .016 * (1 - p); offsetY = Math.cos(local * 64) * height * .008 * (1 - p); }
-  if (scene.animation === 'pop') { const q = p - 1; scale = 1 + 2.70158 * q ** 3 + 1.70158 * q ** 2; offsetY = (1 - p) * height * .12; }
-  const bounds = mediaBounds(scene, width, height);
-  let source = frameFor(scene.asset, sourceTime(scene, local));
-  if (scene.chroma) { const fit=Math.min(1,720/Math.max(scene.asset.width,scene.asset.height)); const fw=Math.max(1,Math.round(scene.asset.width*fit)),fh=Math.max(1,Math.round(scene.asset.height*fit)); if(fx.width!==fw||fx.height!==fh){fx.width=fw;fx.height=fh;}const fctx=fx.getContext('2d',{willReadFrequently:true});fctx.clearRect(0,0,fw,fh);fctx.drawImage(source,0,0,fw,fh);const pixels=fctx.getImageData(0,0,fw,fh);keyGreenPixels(pixels.data,scene.chromaStrength);fctx.putImageData(pixels,0,0);source=fx; }
-  ctx.save(); ctx.translate(scene.x * width + offsetX, scene.y * height + offsetY); ctx.scale(scene.flip ? -scale : scale, scale);
-  ctx.drawImage(source, -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
+  for (const cat of scene.cats) drawCat(ctx, cat, local, width, height, fx);
   drawCaption(ctx, scene, 'top', width, height); drawCaption(ctx, scene, 'bottom', width, height);
 }
 export class Renderer {
