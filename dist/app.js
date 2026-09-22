@@ -2,7 +2,7 @@ import { dimensions, clamp, createCat, createScene, loadAsset, timelineAt, scene
 import { AudioMixer } from './audio.js';
 import { openStore, listAssets, putAsset, deleteAsset, saveDraft, loadDraft } from './storage.js';
 const $=id=>document.getElementById(id);
-const state={scenes:[],selected:0,selectedCat:0,ratio:'9:16',duration:4,target:'media',time:0,playing:false,exporting:false,loading:true,musicId:'',musicVolume:.6};
+const state={scenes:[],selected:0,selectedCat:0,ratio:'9:16',duration:4,target:'media',time:0,playing:false,exporting:false,loading:true,musicId:'',musicVolume:.6,catPage:0,catFilter:'all'};
 const canvas=$('canvas'),renderer=new Renderer(canvas),mixer=new AudioMixer();
 let rows=[],raf=0,epoch=0,scrubEpoch=0,outputUrl=null,drag=null,saveTimer=null,ready=false,persistent=false,cancelExport=null;
 const current=()=>state.scenes[state.selected];
@@ -13,7 +13,7 @@ function status(message,error=false){$('status').textContent=message;$('status')
 function lock(){document.querySelectorAll('button,input,textarea,select').forEach(el=>el.disabled=busy());if(state.exporting){$('play').disabled=false;$('play').textContent='■';$('play').setAttribute('aria-label','取消导出');}if(!busy())syncForm();}
 function stop(){epoch++;cancelAnimationFrame(raf);state.playing=false;mixer.pause(state.scenes);if(!state.exporting){$('play').textContent='▶';$('play').setAttribute('aria-label','播放整片');}}
 function invalidate(){$('download-area').hidden=true;$('result').pause();}
-function snapshot(){return{version:3,ratio:state.ratio,selected:state.selected,selectedCat:state.selectedCat,musicId:state.musicId,musicVolume:state.musicVolume,scenes:state.scenes.map(({backgroundAsset,...s})=>({...s,cats:s.cats.map(({asset,...layer})=>layer)}))};}
+function snapshot(){return{version:4,ratio:state.ratio,selected:state.selected,selectedCat:state.selectedCat,musicId:state.musicId,musicVolume:state.musicVolume,scenes:state.scenes.map(({backgroundAsset,...s})=>({...s,cats:s.cats.map(({asset,...layer})=>layer)}))};}
 function persist(){if(!ready)return;clearTimeout(saveTimer);$('save-state').textContent=persistent?'草稿正在保存…':'仅本次页面';saveTimer=setTimeout(async()=>{try{await saveDraft(snapshot());$('save-state').textContent=persistent?'草稿已保存 · 此浏览器':'仅本次页面，关闭后不保留';}catch(e){$('save-state').textContent='草稿未保存';status(e.message,true);}},250);}
 function changed(){invalidate();state.duration=totalDuration(state.scenes);$('scrub').max=state.duration;state.time=Math.min(state.time,state.duration);persist();}
 function redraw(){if(!current())return;renderer.render(state,state.time);$('clock').textContent=labelTime(state.time)+' / '+labelTime(state.duration);$('scrub').value=state.time;}
@@ -29,7 +29,8 @@ function syncForm(){
  for(const key of ['top','bottom','font','transition','background'])$(key).value=s[key];
  $('scene-duration').value=s.duration;$('trim-start').value=c.trimStart;$('trim-end').value=c.trimEnd;
  $('scale').value=Math.round(c.scale*100);$('scale-out').value=Math.round(c.scale*100)+'%';$('font-out').value=s.font;$('animation').value=c.animation;
- $('loop').checked=c.loop;$('flip').checked=c.flip;$('chroma').checked=c.chroma;$('chroma-strength').value=c.chromaStrength;$('chroma-out').value=c.chromaStrength;
+ $('loop').checked=c.loop;$('flip').checked=c.flip;$('chroma').checked=c.chroma;$('chroma-strength').value=c.chromaStrength;$('chroma-out').value=c.chromaStrength;$('autocrop').checked=c.autoCrop!==false;
+ const crop=c.crop||c.asset.autoCrop||{},cropY=Math.round(((crop.top||0)+(crop.bottom||0))*100);$('crop-note').textContent=cropY?'已自动裁掉上下约 '+cropY+'% 的黑边':'未检测到需要裁切的上下黑边';
  $('original-sound').checked=c.originalSound;$('volume').value=Math.round(c.volume*100);$('volume-out').value=Math.round(c.volume*100)+'%';
  $('background-image').value=s.backgroundId||'';$('music').value=state.musicId;$('music-volume').value=Math.round(state.musicVolume*100);$('music-volume-out').value=Math.round(state.musicVolume*100)+'%';
  $('selected-label').textContent='场景 '+String(state.selected+1).padStart(2,'0');$('asset-name').textContent='选中：'+c.asset.name;
@@ -44,15 +45,23 @@ function selectScene(index){if(busy())return;state.selected=index;state.selected
 function timeline(){$('timeline').replaceChildren();let offset=0;state.scenes.forEach((s,i)=>{const b=document.createElement('button');b.dataset.scene=i;b.onclick=()=>selectScene(i);b.style.flexGrow=Math.max(.5,Math.min(s.duration,30));const title=document.createElement('strong');title.textContent=(i+1)+'. '+(s.top||s.cats[0]?.asset.name||'猫猫同台');const time=document.createElement('small');time.textContent=labelTime(offset)+'—'+labelTime(offset+s.duration)+' · '+Number(s.duration.toFixed(2))+' s · '+s.cats.length+' 只猫';b.append(title,time);$('timeline').append(b);offset+=s.duration;});$('project-length').textContent=state.scenes.length+' 个场景 · '+labelTime(state.duration)+'（'+Number(state.duration.toFixed(2))+' 秒）';syncForm();}
 function storedRow(row){const{thumbUrl,...record}=row;return record;}
 function thumbUrl(row){return row.thumbUrl||(row.thumbUrl=row.file?URL.createObjectURL(row.file):row.url);}
+const filterRules={emotion:/笑|开心|happy|哭|委屈|愤怒|生气|震惊|惊吓|疑惑|害羞|忧|呕吐|紧张|尖叫|大叫|怒吼|严肃|呆滞|瞌睡|昏睡/i,action:/跳舞|跑步|摇|旋转|开车|敲|吃|喝|打电话|工作|按摩|唱歌|吹口哨|举手|走路|自拍|亲亲|求饶|打哈欠|啃|骑摩托|磨指甲/i,role:/香蕉猫|huh|doge|企鹅|山羊|仓鼠|鼠鼠|巴哥|柴犬|土拨鼠|痞老板|cheems/i,sound:/有声|唱歌|叫|声音|音乐|歌/i,silent:/无声/i,green:/绿幕|green.?screen/i};
+function inferredTags(name=''){return Object.entries(filterRules).filter(([,rule])=>rule.test(name)).map(([key])=>key);}
+function normalizedName(name=''){return name.replace(/\.[^.]+$/,'').replace(/\(1\)$/,'').replace(/【高清(?:无水印)?】/g,'').trim().toLowerCase();}
+function fingerprint(file){return normalizedName(file.name)+'|'+file.size;}
+function kindForFile(file){if(file.type.startsWith('audio/'))return'audio';if(file.type==='image/gif')return'gif';if(file.type.startsWith('image/'))return'image';if(file.type.startsWith('video/')||/\.mp4$/i.test(file.name))return'video';return null;}
 function choiceLists(){const choices=[['background-image','使用纯色背景',rows.filter(r=>r.category==='background')],['music','只用各场景原声',rows.filter(r=>r.category==='cat'&&(r.kind==='video'||r.kind==='audio'))]];for(const[id,empty,items]of choices){const el=$(id);el.replaceChildren(new Option(empty,''));items.forEach(row=>el.add(new Option(row.name,row.id)));}syncForm();}
 function library(){
  for(const category of ['cat','background']){
-  const container=$(category==='cat'?'cat-library':'background-library'),query=$(category==='cat'?'cat-search':'background-search').value.toLowerCase(),items=rows.filter(r=>r.category===category);
+  const container=$(category==='cat'?'cat-library':'background-library'),query=$(category==='cat'?'cat-search':'background-search').value.toLowerCase();let items=rows.filter(r=>r.category===category);
+  if(category==='cat'&&state.catFilter!=='all')items=items.filter(r=>inferredTags(r.name+' '+(r.tags||'')).includes(state.catFilter));
   $(category==='cat'?'cat-count':'background-count').textContent=items.length+(category==='cat'?' 个猫素材':' 张背景');
+  items=items.filter(row=>(row.name+' '+(row.tags||'')).toLowerCase().includes(query));
+  const pageSize=category==='cat'?24:30,totalPages=Math.max(1,Math.ceil(items.length/pageSize));if(category==='cat')state.catPage=Math.min(state.catPage,totalPages-1);const visible=category==='cat'?items.slice(state.catPage*pageSize,(state.catPage+1)*pageSize):items;
   container.replaceChildren();let found=0;
-  for(const row of items){if(!(row.name+' '+(row.tags||'')).toLowerCase().includes(query))continue;found++;
+  for(const row of visible){found++;
    const item=document.createElement('article');item.className='library-item';
-   const visual=document.createElement(row.kind==='audio'?'span':row.kind==='video'?'video':'img');visual.className='library-thumb';if(row.kind==='audio')visual.textContent='♫';else{visual.src=thumbUrl(row);if(row.kind==='video'){visual.muted=true;visual.preload='metadata';}}
+   const canThumb=row.file||row.url,visual=document.createElement(row.kind==='audio'||!canThumb?'span':row.kind==='video'?'video':'img');visual.className='library-thumb';if(row.kind==='audio'||!canThumb)visual.textContent=row.kind==='audio'?'♫':'▶';else{visual.src=thumbUrl(row);if(row.kind==='video'){visual.muted=true;visual.preload='metadata';}}
    const body=document.createElement('div'),title=document.createElement('strong'),meta=document.createElement('small');body.className='library-copy';title.textContent=row.name;meta.textContent=({image:'图片',gif:'GIF',video:'视频',audio:'音频'}[row.kind])+(row.duration?' · '+labelTime(row.duration):'');body.append(title,meta);item.append(visual,body);
    if(row.id!=='sample'){const tags=document.createElement('input');tags.value=row.tags||'';tags.placeholder='标签：卧室 / 开心…';tags.setAttribute('aria-label',row.name+'的标签');tags.onchange=()=>{row.tags=tags.value.slice(0,120);void putAsset(storedRow(row)).catch(e=>status(e.message,true));};item.append(tags);}
    const actions=document.createElement('div');actions.className='library-actions';const action=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{if(!busy())void fn();};actions.append(b);};
@@ -65,31 +74,46 @@ function library(){
    item.append(actions);container.append(item);
   }
   if(!found){const p=document.createElement('p');p.className='small-note';p.textContent=category==='cat'?'没有找到猫猫。':'背景素材区还没有匹配的图片。';container.append(p);}
+  if(category==='cat'&&items.length){$('cat-page').textContent=`第 ${state.catPage+1} / ${totalPages} 页`;$('cat-prev').disabled=state.catPage===0;$('cat-next').disabled=state.catPage>=totalPages-1;$('cat-pager').hidden=totalPages<=1;}
  }
 }
-async function assetFor(id){const row=rows.find(r=>r.id===id);if(!row)throw new Error('找不到原素材，请重新导入。');return loadAsset(row.file||row.url,row.name);}
+async function assetFor(id){const row=rows.find(r=>r.id===id);if(!row)throw new Error('找不到原素材，请重新导入。');let source=row.file||row.url;if(!source&&row.handle){try{source=await row.handle.getFile();}catch{throw new Error('需要重新关联本地热门猫文件夹。');}}if(!source)throw new Error('找不到原素材，请重新导入。');return loadAsset(source,row.name);}
 async function insertCat(id,mode){
  if(busy())return;const row=rows.find(r=>r.id===id);if(!row||row.category!=='cat'||row.kind==='audio')return;stop();state.loading=true;lock();
- try{const asset=await assetFor(id),newCat=createCat(asset,id);newCat.chroma=/绿幕|green.?screen/i.test(asset.name);
+ try{const asset=await assetFor(id),newCat=createCat(asset,id);newCat.chroma=asset.autoChroma||/绿幕|green.?screen/i.test(asset.name);newCat.chromaStrength=100;
   if(mode==='new'){const s=createScene(asset,state.scenes.length);s.cats=[newCat];state.scenes.push(s);state.selected=state.scenes.length-1;state.selectedCat=0;}
-  else if(mode==='replace'){const old=cat();for(const key of ['x','y','scale','flip','chroma','chromaStrength','animation','volume','originalSound'])newCat[key]=old[key];current().cats[state.selectedCat]=newCat;releaseCat(old);}
+  else if(mode==='replace'){const old=cat();for(const key of ['x','y','scale','flip','animation','volume','originalSound'])newCat[key]=old[key];current().cats[state.selectedCat]=newCat;releaseCat(old);}
   else{const n=current().cats.length;newCat.x=n%2?.68:.32;newCat.y=n>2?.66:.5;newCat.scale=.7;current().cats.push(newCat);state.selectedCat=current().cats.length-1;}
   changed();timeline();status(mode==='new'?'新的一幕已加入故事。':mode==='replace'?'已替换选中的猫猫。':'猫猫已加入本幕；拖动画布可安排它的位置。');
  }catch(e){status(e.message,true);}finally{state.loading=false;lock();if(current())await goTo(sceneStart(state.scenes,state.selected));}
 }
 async function audioMetadata(file){const a=document.createElement('audio'),url=URL.createObjectURL(file);a.src=url;try{return await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('音频读取超时。')),15000);a.onloadedmetadata=()=>{clearTimeout(timer);Number.isFinite(a.duration)&&a.duration>0?resolve(a.duration):reject(new Error('音频时长无效。'));};a.onerror=()=>{clearTimeout(timer);reject(new Error('浏览器无法读取该音频。'));};a.load();});}finally{a.removeAttribute('src');a.load();URL.revokeObjectURL(url);}}
 async function importFiles(files,category){
- if(busy())return;stop();state.loading=true;lock();let added=0,errors=[];
+ if(busy())return;stop();state.loading=true;lock();let added=0,skipped=0,errors=[];const known=new Set(rows.filter(r=>r.file).map(r=>fingerprint(r.file)));
  try{for(const file of files){if(file.size>200*1024*1024){errors.push(file.name+' 超过 200 MB。');continue;}status('正在整理 '+file.name+'…');try{
+  const key=fingerprint(file);if(known.has(key)){skipped++;continue;}
   let kind,duration=0;if(file.type.startsWith('audio/')){if(category==='background')throw new Error('背景请选择静态图片。');kind='audio';duration=await audioMetadata(file);}else{const asset=await loadAsset(file);kind=asset.kind;duration=asset.duration||0;asset.release();}
   if(category==='background'&&kind!=='image')throw new Error('背景请选择 JPG / PNG / WebP 静态图片。');
-  const row={id:crypto.randomUUID(),file,name:file.name,kind,duration,category,tags:file.webkitRelativePath?.split('/').slice(0,-1).join(' ')||''};await putAsset(row);rows.push(row);added++;
+  const tags=[file.webkitRelativePath?.split('/').slice(0,-1).join(' ')||'',...inferredTags(file.name)].filter(Boolean).join(' '),row={id:crypto.randomUUID(),file,name:file.name,size:file.size,kind,duration,category,tags};await putAsset(row);rows.push(row);known.add(key);added++;
  }catch(e){errors.push(file.name+'：'+e.message);}}}
  finally{state.loading=false;library();choiceLists();lock();for(const id of ['cat-upload','cat-folder','background-upload','background-folder'])$(id).value='';}
- status((added?'已放入 '+added+' 个'+(category==='background'?'背景':'猫素材')+'。':'')+(errors.length?errors.join(' '):''),!!errors.length);
+ status((added?'已放入 '+added+' 个'+(category==='background'?'背景':'猫素材')+'。':'')+(skipped?' 已跳过 '+skipped+' 个重复文件。':'')+(errors.length?errors.join(' '):''),!!errors.length);
+}
+async function linkedFiles(directory,path=''){
+ const result=[];for await(const handle of directory.values()){if(handle.kind==='directory')result.push(...await linkedFiles(handle,path+handle.name+'/'));else result.push({handle,path});}return result;
+}
+async function linkCatFolder(){
+ if(busy())return;if(!window.showDirectoryPicker)return status('当前浏览器不支持关联文件夹，请用上面的“批量导入”按钮。',true);
+ stop();state.loading=true;lock();let added=0,skipped=0,unsupported=0;
+ try{const directory=await showDirectoryPicker({mode:'read'});const entries=await linkedFiles(directory),known=new Set(rows.map(r=>r.file?fingerprint(r.file):r.fingerprint).filter(Boolean));
+  await navigator.storage?.persist?.();
+  for(let i=0;i<entries.length;i++){const {handle,path}=entries[i],file=await handle.getFile(),kind=kindForFile(file);status(`正在关联 ${i+1} / ${entries.length}：${file.name}`);if(!kind){unsupported++;continue;}if(file.size>220*1024*1024){unsupported++;continue;}const key=fingerprint(file);if(known.has(key)){skipped++;continue;}const tags=[path.replace(/\/$/,''),...inferredTags(file.name)].filter(Boolean).join(' '),row={id:crypto.randomUUID(),handle,fingerprint:key,name:file.name,size:file.size,kind,duration:0,category:'cat',tags};await putAsset(row);rows.push(row);known.add(key);added++;}
+  state.catPage=0;library();choiceLists();status(`热门猫窝已关联：新增 ${added} 个，跳过 ${skipped} 个重复文件${unsupported?'，忽略 '+unsupported+' 个不支持文件':''}。素材继续保存在本地文件夹，不会复制 3.8 GB 到浏览器。`);
+ }catch(e){if(e?.name!=='AbortError')status('关联文件夹失败：'+e.message,true);}
+ finally{state.loading=false;lock();}
 }
 async function setBackground(id){if(busy())return;const row=rows.find(r=>r.id===id);if(id&&row?.category!=='background')return status('请选择背景素材区的图片。',true);editStart();state.loading=true;lock();try{const bg=id?await assetFor(id):null;if(bg&&bg.kind!=='image'){bg.release();throw new Error('背景仅支持静态图片。');}current().backgroundAsset?.release();current().backgroundAsset=bg;current().backgroundId=id||null;changed();redraw();status(id?'实景背景已铺在这一幕的最下层。':'已改用纯色背景。');}catch(e){status(e.message,true);}finally{state.loading=false;lock();}}
-async function setMusic(id){if(busy())return;stop();state.loading=true;lock();try{await mixer.setMusic(rows.find(r=>r.id===id)||null);state.musicId=id;changed();status(id?'这段原声会贯穿全片并循环播放。':'已恢复仅使用各猫原声。');}catch(e){state.musicId='';mixer.clearMusic();status(e.message,true);}finally{state.loading=false;lock();choiceLists();}}
+async function setMusic(id){if(busy())return;stop();state.loading=true;lock();try{let row=rows.find(r=>r.id===id)||null;if(row?.handle)row={...row,file:await row.handle.getFile()};await mixer.setMusic(row);state.musicId=id;changed();status(id?'这段原声会贯穿全片并循环播放。':'已恢复仅使用各猫原声。');}catch(e){state.musicId='';mixer.clearMusic();status(e.message,true);}finally{state.loading=false;lock();choiceLists();}}
 async function duplicate(){if(busy())return;stop();state.loading=true;lock();let s;try{const old=current();s={...old,id:crypto.randomUUID(),cats:[],backgroundAsset:null};for(const c of old.cats)s.cats.push({...c,id:crypto.randomUUID(),asset:await assetFor(c.assetId)});if(old.backgroundId)s.backgroundAsset=await assetFor(old.backgroundId);state.scenes.splice(state.selected+1,0,s);state.selected++;changed();timeline();}catch(e){if(s)releaseScene(s);status(e.message,true);}finally{state.loading=false;lock();await goTo(sceneStart(state.scenes,state.selected));}}
 function reorder(delta){if(busy())return;const next=state.selected+delta;if(next<0||next>=state.scenes.length)return;stop();[state.scenes[state.selected],state.scenes[next]]=[state.scenes[next],state.scenes[state.selected]];state.selected=next;changed();timeline();void goTo(sceneStart(state.scenes,next));}
 function removeScene(){if(busy()||state.scenes.length===1)return;stop();releaseScene(current());state.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.scenes.length-1);state.selectedCat=Math.min(state.selectedCat,current().cats.length-1);changed();timeline();void goTo(sceneStart(state.scenes,state.selected));}
@@ -102,7 +126,7 @@ $('scene-duration').oninput=()=>{const v=Number($('scene-duration').value);if(!N
 $('scene-duration').onchange=()=>{const v=Number($('scene-duration').value);if(!Number.isFinite(v)||v<.1){status('场景时长至少 0.1 秒。',true);syncForm();}};
 for(const[id,key]of[['trim-start','trimStart'],['trim-end','trimEnd']])$(id).onchange=()=>{const c=cat(),v=Number($(id).value),end=c.asset.duration;const valid=Number.isFinite(v)&&v>=0&&v<=end&&(key==='trimStart'?v<c.trimEnd:v>c.trimStart);if(!valid){status('素材起点必须小于终点，且都在原素材时长内。',true);syncForm();return;}editStart();c[key]=v;changed();syncForm();void goTo(sceneStart(state.scenes,state.selected));};
 $('match-duration').onclick=()=>{editStart();current().duration=Math.max(.1,cat().trimEnd-cat().trimStart);changed();timeline();void goTo(sceneStart(state.scenes,state.selected));};
-for(const[id,key]of[['loop','loop'],['flip','flip'],['chroma','chroma'],['original-sound','originalSound']])$(id).onchange=()=>{editStart();cat()[key]=$(id).checked;changed();redraw();};
+for(const[id,key]of[['loop','loop'],['flip','flip'],['chroma','chroma'],['autocrop','autoCrop'],['original-sound','originalSound']])$(id).onchange=()=>{editStart();cat()[key]=$(id).checked;changed();syncForm();redraw();};
 for(const[id,key]of[['chroma-strength','chromaStrength'],['volume','volume']])$(id).oninput=()=>{editStart();cat()[key]=Number($(id).value)/(key==='volume'?100:1);changed();syncForm();redraw();};
 $('music-volume').oninput=()=>{stop();state.musicVolume=Number($('music-volume').value)/100;changed();syncForm();};
 document.querySelectorAll('[data-style]').forEach(b=>b.onclick=()=>{editStart();current().style=b.dataset.style;changed();syncForm();redraw();});
@@ -111,7 +135,8 @@ document.querySelectorAll('[data-ratio]').forEach(b=>b.onclick=()=>{stop();state
 $('center').onclick=()=>{editStart();const s=current(),c=cat();if(state.target==='media'){c.x=c.y=.5;c.scale=1;}else{s[state.target+'X']=.5;s[state.target+'Y']=state.target==='top'?.1:.86;}changed();syncForm();redraw();};
 $('cat-upload').onchange=()=>void importFiles([...$('cat-upload').files],'cat');$('cat-folder').onchange=()=>void importFiles([...$('cat-folder').files],'cat');
 $('background-upload').onchange=()=>void importFiles([...$('background-upload').files],'background');$('background-folder').onchange=()=>void importFiles([...$('background-folder').files],'background');
-$('background-image').onchange=()=>void setBackground($('background-image').value);$('music').onchange=()=>void setMusic($('music').value);$('cat-search').oninput=library;$('background-search').oninput=library;
+$('link-cat-folder').onclick=()=>void linkCatFolder();$('cat-filter').onchange=()=>{state.catFilter=$('cat-filter').value;state.catPage=0;library();};$('cat-prev').onclick=()=>{state.catPage=Math.max(0,state.catPage-1);library();};$('cat-next').onclick=()=>{state.catPage++;library();};
+$('background-image').onchange=()=>void setBackground($('background-image').value);$('music').onchange=()=>void setMusic($('music').value);$('cat-search').oninput=()=>{state.catPage=0;library();};$('background-search').oninput=library;
 for(const [id,category] of [['cat-dropzone','cat'],['background-dropzone','background']]){const zone=$(id);for(const event of ['dragenter','dragover'])zone.addEventListener(event,e=>{e.preventDefault();zone.classList.add('over');});for(const event of ['dragleave','drop'])zone.addEventListener(event,e=>{e.preventDefault();zone.classList.remove('over');});zone.addEventListener('drop',e=>void importFiles([...e.dataTransfer.files],category));}
 $('scrub').oninput=()=>{if(!busy())void goTo(Number($('scrub').value));};$('restart').onclick=()=>void goTo(0);
 function position(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};}
@@ -150,16 +175,16 @@ try{
  persistent=await openStore();rows=[{id:'sample',name:'示例猫猫',kind:'image',category:'cat',tags:'猫 占位 示例',url:'./assets/sample-cat.jpg'},...await listAssets()];
  const draft=await loadDraft();const catIds=new Set(),bgIds=new Set();
  if(draft?.version===2){for(const s of draft.scenes){catIds.add(s.assetId);if(s.backgroundId)bgIds.add(s.backgroundId);}}
- if(draft?.version===3){for(const s of draft.scenes){for(const c of s.cats||[])catIds.add(c.assetId);if(s.backgroundId)bgIds.add(s.backgroundId);}}
+ if(draft?.version===3||draft?.version===4){for(const s of draft.scenes){for(const c of s.cats||[])catIds.add(c.assetId);if(s.backgroundId)bgIds.add(s.backgroundId);}}
  for(const row of rows){if(row.id==='sample'||row.category)continue;row.category=row.kind==='image'&&!catIds.has(row.id)?'background':'cat';if(bgIds.has(row.id))row.category='background';if(row.kind==='image')await putAsset(storedRow(row));}
  library();choiceLists();
- if(draft?.version===2||draft?.version===3){state.ratio=dimensions[draft.ratio]?draft.ratio:'9:16';state.musicVolume=clamp(Number.isFinite(Number(draft.musicVolume))?Number(draft.musicVolume):.6,0,1);let missing=0;
+ if(draft?.version===2||draft?.version===3||draft?.version===4){state.ratio=dimensions[draft.ratio]?draft.ratio:'9:16';state.musicVolume=clamp(Number.isFinite(Number(draft.musicVolume))?Number(draft.musicVolume):.6,0,1);let missing=0;
   for(const saved of draft.scenes){let s;try{if(draft.version===2){const asset=await assetFor(saved.assetId);s=createScene(asset);const c=s.cats[0];for(const key of ['assetId','trimStart','trimEnd','loop','volume','originalSound','chroma','chromaStrength','flip','x','y','scale','animation'])if(saved[key]!==undefined)c[key]=saved[key];for(const key of ['id','duration','backgroundId','top','bottom','style','font','topX','topY','bottomX','bottomY','transition','background'])if(saved[key]!==undefined)s[key]=saved[key];}
-   else{s={...saved,cats:[],backgroundAsset:null};for(const layer of saved.cats){const asset=await assetFor(layer.assetId);s.cats.push({...createCat(asset,layer.assetId),...layer,asset});}if(!s.cats.length)throw new Error('场景缺少猫素材');}
+   else{s={...saved,cats:[],backgroundAsset:null};for(const layer of saved.cats){const asset=await assetFor(layer.assetId),defaults=createCat(asset,layer.assetId),restored={...defaults,...layer,asset};if(draft.version<4&&asset.autoChroma){restored.chroma=true;restored.chromaStrength=100;restored.autoCrop=true;restored.crop={...asset.autoCrop};}s.cats.push(restored);}if(!s.cats.length)throw new Error('场景缺少猫素材');}
    if(s.backgroundId)s.backgroundAsset=await assetFor(s.backgroundId);state.scenes.push(s);
   }catch{if(s)releaseScene(s);missing++;}}
   state.selected=Math.min(draft.selected||0,Math.max(0,state.scenes.length-1));state.selectedCat=Math.min(draft.selectedCat||0,Math.max(0,state.scenes[state.selected]?.cats.length-1||0));
-  if(draft.musicId&&rows.some(r=>r.id===draft.musicId)){try{await mixer.setMusic(rows.find(r=>r.id===draft.musicId));state.musicId=draft.musicId;}catch{}}
+  if(draft.musicId&&rows.some(r=>r.id===draft.musicId)){try{let musicRow=rows.find(r=>r.id===draft.musicId);if(musicRow.handle)musicRow={...musicRow,file:await musicRow.handle.getFile()};await mixer.setMusic(musicRow);state.musicId=draft.musicId;}catch{}}
   if(missing)status(missing+' 个场景的素材缺失，请重新导入。',true);
  }
  if(!state.scenes.length){const s=createScene(await assetFor('sample'));s.cats[0].assetId='sample';state.scenes.push(s);}

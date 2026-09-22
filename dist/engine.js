@@ -1,7 +1,8 @@
 export const dimensions = { '9:16': [540, 960], '1:1': [720, 720], '16:9': [960, 540] };
 export const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 export function createCat(asset, assetId = null) {
-  return { id: crypto.randomUUID(), asset, assetId, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, chroma: false, chromaStrength: 40, flip: false, x: .5, y: .5, scale: 1, animation: 'zoom' };
+  const crop = asset.autoCrop || { top: 0, right: 0, bottom: 0, left: 0 };
+  return { id: crypto.randomUUID(), asset, assetId, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, chroma: Boolean(asset.autoChroma), chromaStrength: 100, autoCrop: Boolean(asset.autoChroma), crop: { ...crop }, flip: false, x: .5, y: .5, scale: 1, animation: 'zoom' };
 }
 export function createScene(asset, index = 0) {
   return { id: crypto.randomUUID(), cats: [createCat(asset)], duration: asset.kind === 'video' ? asset.duration : 4, backgroundId: null, backgroundAsset: null, top: index ? '我：只是随便看看' : '当我发现我的 CP', bottom: index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', style: 'meme', font: 48, topX: .5, topY: .1, bottomX: .5, bottomY: .86, transition: 'fade', background: '#f9a8d4' };
@@ -43,19 +44,51 @@ export async function loadAsset(fileOrUrl, name = '示例猫猫') {
           } finally { image.close(); }
         }
       } finally { decoder.close(); }
-      return { kind: 'gif', name: file.name, url, width, height, frames, duration: total, release() { frames.forEach(f => f.bitmap.close()); URL.revokeObjectURL(url); } };
+      const analysis = analyzeBackdrop(frames[0]?.bitmap, width, height, file.name);
+      return { kind: 'gif', name: file.name, url, width, height, frames, duration: total, ...analysis, release() { frames.forEach(f => f.bitmap.close()); URL.revokeObjectURL(url); } };
     }
     if (type.startsWith('video/')) {
       element = document.createElement('video'); element.muted = true; element.playsInline = true; element.preload = 'auto'; element.loop = true;
       const ready = waitFor(element, 'loadeddata'); element.src = url; element.load(); await ready;
       if (!Number.isFinite(element.duration) || element.duration <= 0) throw new Error('无法确定视频时长，请换一份完整的视频文件。');
       if (element.videoWidth * element.videoHeight > 8_300_000) throw new Error('视频分辨率过大，请先压缩到 4K 以内。');
-      return { kind: 'video', name: file.name, url, element, width: element.videoWidth, height: element.videoHeight, duration: element.duration, release() { element.pause(); element.removeAttribute('src'); element.load(); URL.revokeObjectURL(url); } };
+      const analysis = analyzeBackdrop(element, element.videoWidth, element.videoHeight, file.name);
+      return { kind: 'video', name: file.name, url, element, width: element.videoWidth, height: element.videoHeight, duration: element.duration, ...analysis, release() { element.pause(); element.removeAttribute('src'); element.load(); URL.revokeObjectURL(url); } };
     }
     element = new Image(); const ready = waitFor(element, 'load'); element.src = url; await ready;
     if (element.naturalWidth * element.naturalHeight > 32_000_000) throw new Error('图片分辨率过大，请先缩小到 3200 万像素以内。');
-    return { kind: 'image', name: file?.name || name, url, element, width: element.naturalWidth, height: element.naturalHeight, release() { if (file) URL.revokeObjectURL(url); } };
+    const analysis = analyzeBackdrop(element, element.naturalWidth, element.naturalHeight, file?.name || name);
+    return { kind: 'image', name: file?.name || name, url, element, width: element.naturalWidth, height: element.naturalHeight, ...analysis, release() { if (file) URL.revokeObjectURL(url); } };
   } catch (error) { frames.forEach(f => f.bitmap.close()); if (element?.tagName === 'VIDEO') { element.pause(); element.removeAttribute('src'); element.load(); } if (file) URL.revokeObjectURL(url); throw error; }
+}
+function analyzeBackdrop(source, width, height, name = '') {
+  const empty = { autoChroma: false, autoCrop: { top: 0, right: 0, bottom: 0, left: 0 } };
+  if (!source || !width || !height) return empty;
+  try {
+    const max = 240, fit = Math.min(1, max / Math.max(width, height));
+    const w = Math.max(1, Math.round(width * fit)), h = Math.max(1, Math.round(height * fit));
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(source, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data, rows = new Float32Array(h), cols = new Float32Array(w);
+    let green = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2];
+      if (g > 55 && g - Math.max(r, b) > 24) { green++; rows[y]++; cols[x]++; }
+    }
+    const autoChroma = green / (w * h) > .12 || /绿幕|green.?screen/i.test(name);
+    if (!autoChroma) return empty;
+    for (let y = 0; y < h; y++) rows[y] /= w;
+    for (let x = 0; x < w; x++) cols[x] /= h;
+    const span = (values, threshold) => {
+      let first = 0, last = values.length - 1;
+      while (first < values.length && values[first] < threshold) first++;
+      while (last >= 0 && values[last] < threshold) last--;
+      return first <= last ? [first, last] : [0, values.length - 1];
+    };
+    const [top, bottom] = span(rows, .08), [left, right] = span(cols, .08);
+    const normalize = (value, size) => value / size > .025 && value / size < .4 ? value / size : 0;
+    return { autoChroma: true, autoCrop: { top: normalize(top, h), right: normalize(w - right - 1, w), bottom: normalize(h - bottom - 1, h), left: normalize(left, w) } };
+  } catch { return /绿幕|green.?screen/i.test(name) ? { ...empty, autoChroma: true } : empty; }
 }
 export function timelineAt(time, duration, scenes) {
   let index = 0, start = 0;
@@ -70,13 +103,16 @@ export function sceneStart(scenes, index) { return scenes.slice(0, index).reduce
 export function totalDuration(scenes) { return scenes.reduce((sum, scene) => sum + scene.duration, 0); }
 export function sourceTime(cat, local) { const start = cat.trimStart || 0, end = cat.trimEnd || cat.asset.duration || 4, length = Math.max(.01, end - start); return start + (cat.loop ? Math.max(0, local) % length : Math.min(Math.max(0, local), Math.max(0, length - .025))); }
 function frameFor(asset, time) {
-  if (asset.kind !== 'gif') return asset.element;
+  if (asset.kind !== 'gif') return { source: asset.element, tag: asset.kind === 'video' ? Math.floor(asset.element.currentTime * 24) : 0 };
   const t = time % asset.duration;
-  return (asset.frames.find(f => t < f.start + f.duration) || asset.frames.at(-1)).bitmap;
+  const found = asset.frames.findIndex(f => t < f.start + f.duration), index = found < 0 ? asset.frames.length - 1 : found;
+  return { source: asset.frames[index].bitmap, tag: index };
 }
 export function mediaBounds(cat, width, height) {
-  const fit = Math.min(width / cat.asset.width, height / cat.asset.height) * cat.scale;
-  const w = cat.asset.width * fit, h = cat.asset.height * fit;
+  const crop = cat.autoCrop === false ? { top: 0, right: 0, bottom: 0, left: 0 } : (cat.crop || cat.asset.autoCrop || { top: 0, right: 0, bottom: 0, left: 0 });
+  const sourceWidth = cat.asset.width * Math.max(.05, 1 - crop.left - crop.right), sourceHeight = cat.asset.height * Math.max(.05, 1 - crop.top - crop.bottom);
+  const fit = Math.min(width / sourceWidth, height / sourceHeight) * cat.scale;
+  const w = sourceWidth * fit, h = sourceHeight * fit;
   return { x: cat.x * width - w / 2, y: cat.y * height - h / 2, w, h };
 }
 function wrappedLines(ctx, text, maxWidth) {
@@ -115,7 +151,7 @@ export function keyGreenPixels(data, strength) {
     if (g > 50 && dominance > threshold) { const alpha = 1 - clamp((dominance - threshold) / 35, 0, 1); data[i+3] = Math.round(data[i+3] * alpha); if (alpha > 0) data[i+1] = Math.min(g, Math.max(r,b) + threshold); }
   }
 }
-function drawCat(ctx, cat, local, width, height, fx) {
+function drawCat(ctx, cat, local, width, height, keyCache, quality) {
   const sourceAsset = cat.asset;
   const p = clamp(local / .55, 0, 1);
   let scale = 1, offsetX = 0, offsetY = 0;
@@ -123,26 +159,41 @@ function drawCat(ctx, cat, local, width, height, fx) {
   if (cat.animation === 'shake' && p < 1) { offsetX = Math.sin(local * 85) * width * .016 * (1 - p); offsetY = Math.cos(local * 64) * height * .008 * (1 - p); }
   if (cat.animation === 'pop') { const q = p - 1; scale = 1 + 2.70158 * q ** 3 + 1.70158 * q ** 2; offsetY = (1 - p) * height * .12; }
   const bounds = mediaBounds(cat, width, height);
-  let source = frameFor(sourceAsset, sourceTime(cat, local));
-  if (cat.chroma) { const fit=Math.min(1,720/Math.max(sourceAsset.width,sourceAsset.height)); const fw=Math.max(1,Math.round(sourceAsset.width*fit)),fh=Math.max(1,Math.round(sourceAsset.height*fit)); if(fx.width!==fw||fx.height!==fh){fx.width=fw;fx.height=fh;}const fctx=fx.getContext('2d',{willReadFrequently:true});fctx.clearRect(0,0,fw,fh);fctx.drawImage(source,0,0,fw,fh);const pixels=fctx.getImageData(0,0,fw,fh);keyGreenPixels(pixels.data,cat.chromaStrength);fctx.putImageData(pixels,0,0);source=fx; }
+  const frame = frameFor(sourceAsset, sourceTime(cat, local)); let source = frame.source;
+  const crop = cat.autoCrop === false ? { top: 0, right: 0, bottom: 0, left: 0 } : (cat.crop || sourceAsset.autoCrop || { top: 0, right: 0, bottom: 0, left: 0 });
+  const sx = sourceAsset.width * crop.left, sy = sourceAsset.height * crop.top, sw = sourceAsset.width * Math.max(.05, 1 - crop.left - crop.right), sh = sourceAsset.height * Math.max(.05, 1 - crop.top - crop.bottom);
+  let sourceRect = [sx, sy, sw, sh];
+  if (cat.chroma) {
+    let cache = keyCache.get(cat.id);
+    if (!cache) { const canvas = document.createElement('canvas'); cache = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true }), tag: null }; keyCache.set(cat.id, cache); }
+    const fit = Math.min(1, quality / Math.max(sw, sh)), fw = Math.max(1, Math.round(sw * fit)), fh = Math.max(1, Math.round(sh * fit));
+    const tag = `${frame.tag}|${cat.chromaStrength}|${fw}x${fh}|${sx.toFixed(2)},${sy.toFixed(2)},${sw.toFixed(2)},${sh.toFixed(2)}`;
+    if (cache.tag !== tag) {
+      if (cache.canvas.width !== fw || cache.canvas.height !== fh) { cache.canvas.width = fw; cache.canvas.height = fh; }
+      cache.ctx.clearRect(0, 0, fw, fh); cache.ctx.drawImage(source, sx, sy, sw, sh, 0, 0, fw, fh);
+      const pixels = cache.ctx.getImageData(0, 0, fw, fh); keyGreenPixels(pixels.data, cat.chromaStrength); cache.ctx.putImageData(pixels, 0, 0); cache.tag = tag;
+    }
+    source = cache.canvas; sourceRect = [0, 0, cache.canvas.width, cache.canvas.height];
+  }
   ctx.save(); ctx.translate(cat.x * width + offsetX, cat.y * height + offsetY); ctx.scale(cat.flip ? -scale : scale, scale);
-  ctx.drawImage(source, -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
+  ctx.drawImage(source, ...sourceRect, -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
 }
-function drawScene(ctx, scene, local, width, height, fx) {
+function drawScene(ctx, scene, local, width, height, keyCache, quality) {
   ctx.fillStyle = scene.background; ctx.fillRect(0, 0, width, height);
   if (scene.backgroundAsset) { const bg=scene.backgroundAsset, cover=Math.max(width/bg.width,height/bg.height); ctx.drawImage(bg.element,(width-bg.width*cover)/2,(height-bg.height*cover)/2,bg.width*cover,bg.height*cover); }
-  for (const cat of scene.cats) drawCat(ctx, cat, local, width, height, fx);
+  for (const cat of scene.cats) drawCat(ctx, cat, local, width, height, keyCache, quality);
   drawCaption(ctx, scene, 'top', width, height); drawCaption(ctx, scene, 'bottom', width, height);
 }
 export class Renderer {
-  constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.buffer = document.createElement('canvas'); this.bufferCtx = this.buffer.getContext('2d'); this.fx=document.createElement('canvas'); }
+  constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.buffer = document.createElement('canvas'); this.bufferCtx = this.buffer.getContext('2d'); this.keyCache = new Map(); }
   render(state, time) {
     const { width: w, height: h } = this.canvas, ctx = this.ctx;
     const at = timelineAt(time, state.duration, state.scenes), scene = state.scenes[at.index];
-    ctx.clearRect(0, 0, w, h); drawScene(ctx, scene, at.local, w, h, this.fx);
+    const quality = state.exporting ? 720 : state.playing ? 420 : 560;
+    ctx.clearRect(0, 0, w, h); drawScene(ctx, scene, at.local, w, h, this.keyCache, quality);
     if (at.progress > 0) {
       if (this.buffer.width !== w || this.buffer.height !== h) { this.buffer.width = w; this.buffer.height = h; }
-      drawScene(this.bufferCtx, state.scenes[at.index + 1], 0, w, h, this.fx);
+      drawScene(this.bufferCtx, state.scenes[at.index + 1], 0, w, h, this.keyCache, quality);
       ctx.save();
       if (scene.transition === 'fade') { ctx.globalAlpha = at.progress; ctx.drawImage(this.buffer, 0, 0); }
       if (scene.transition === 'slide') { ctx.drawImage(this.buffer, w * (1 - at.progress), 0); }
