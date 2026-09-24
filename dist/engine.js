@@ -1,11 +1,18 @@
 export const dimensions = { '9:16': [540, 960], '1:1': [720, 720], '16:9': [960, 540] };
 export const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+export function createCaption(text = '输入一句猫猫对白', options = {}) {
+  return { id: crypto.randomUUID(), text, start: 0, end: 4, x: .5, y: .5, style: 'meme', font: 48, ...options };
+}
 export function createCat(asset, assetId = null) {
   const crop = asset.autoCrop || { top: 0, right: 0, bottom: 0, left: 0 };
-  return { id: crypto.randomUUID(), asset, assetId, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, chroma: Boolean(asset.autoChroma), chromaStrength: 100, autoCrop: Boolean(asset.autoChroma), crop: { ...crop }, flip: false, x: .5, y: .5, scale: 1, animation: 'zoom' };
+  return { id: crypto.randomUUID(), asset, assetId, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, chroma: Boolean(asset.autoChroma), chromaStrength: 100, autoCrop: Boolean(asset.autoChroma), crop: { ...crop }, cropVersion: 2, flip: false, x: .5, y: .5, scale: 1, animation: 'zoom' };
 }
 export function createScene(asset, index = 0) {
-  return { id: crypto.randomUUID(), cats: [createCat(asset)], duration: asset.kind === 'video' ? asset.duration : 4, backgroundId: null, backgroundAsset: null, top: index ? '我：只是随便看看' : '当我发现我的 CP', bottom: index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', style: 'meme', font: 48, topX: .5, topY: .1, bottomX: .5, bottomY: .86, transition: 'fade', background: '#f9a8d4' };
+  const duration = asset.kind === 'video' ? asset.duration : 4;
+  return { id: crypto.randomUUID(), cats: [createCat(asset)], duration, backgroundId: null, backgroundAsset: null, captions: [
+    createCaption(index ? '我：只是随便看看' : '当我发现我的 CP', { end: duration, x: .5, y: .1 }),
+    createCaption(index ? '也是我：立刻开始发疯' : '居然有专属分析网站！', { end: duration, x: .5, y: .86 }),
+  ], transition: 'fade', background: '#f9a8d4' };
 }
 function waitFor(element, event, fail = 'error') {
   return new Promise((resolve, reject) => {
@@ -69,25 +76,37 @@ function analyzeBackdrop(source, width, height, name = '') {
     const w = Math.max(1, Math.round(width * fit)), h = Math.max(1, Math.round(height * fit));
     const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(source, 0, 0, w, h);
-    const data = ctx.getImageData(0, 0, w, h).data, rows = new Float32Array(h), cols = new Float32Array(w);
+    const data = ctx.getImageData(0, 0, w, h).data, rows = new Float32Array(h), cols = new Float32Array(w), blackRows = new Float32Array(h), blackCols = new Float32Array(w);
     let green = 0;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2];
       if (g > 55 && g - Math.max(r, b) > 24) { green++; rows[y]++; cols[x]++; }
+      if (Math.max(r, g, b) < 32) { blackRows[y]++; blackCols[x]++; }
     }
     const autoChroma = green / (w * h) > .12 || /绿幕|green.?screen/i.test(name);
     if (!autoChroma) return empty;
     for (let y = 0; y < h; y++) rows[y] /= w;
     for (let x = 0; x < w; x++) cols[x] /= h;
+    for (let y = 0; y < h; y++) blackRows[y] /= w;
+    for (let x = 0; x < w; x++) blackCols[x] /= h;
     const span = (values, threshold) => {
       let first = 0, last = values.length - 1;
       while (first < values.length && values[first] < threshold) first++;
       while (last >= 0 && values[last] < threshold) last--;
       return first <= last ? [first, last] : [0, values.length - 1];
     };
-    const [top, bottom] = span(rows, .08), [left, right] = span(cols, .08);
-    const normalize = (value, size) => value / size > .025 && value / size < .4 ? value / size : 0;
-    return { autoChroma: true, autoCrop: { top: normalize(top, h), right: normalize(w - right - 1, w), bottom: normalize(h - bottom - 1, h), left: normalize(left, w) } };
+    const edgeBars = values => {
+      let first = 0, last = values.length - 1;
+      while (first < values.length && values[first] > .68) first++;
+      while (last >= 0 && values[last] > .68) last--;
+      return [first, last];
+    };
+    const [greenTop, greenBottom] = span(rows, .08), [greenLeft, greenRight] = span(cols, .08);
+    const [blackTop, blackBottom] = edgeBars(blackRows), [blackLeft, blackRight] = edgeBars(blackCols);
+    const insetY = Math.max(2, Math.round(h * .012)), insetX = Math.max(2, Math.round(w * .008));
+    const top = Math.max(greenTop, blackTop), bottom = Math.min(greenBottom, blackBottom), left = Math.max(greenLeft, blackLeft), right = Math.min(greenRight, blackRight);
+    const normalize = (value, size, inset) => value / size > .018 && value / size < .43 ? Math.min(.44, (value + inset) / size) : 0;
+    return { autoChroma: true, autoCropVersion: 2, autoCrop: { top: normalize(top, h, insetY), right: normalize(w - right - 1, w, insetX), bottom: normalize(h - bottom - 1, h, insetY), left: normalize(left, w, insetX) } };
   } catch { return /绿幕|green.?screen/i.test(name) ? { ...empty, autoChroma: true } : empty; }
 }
 export function timelineAt(time, duration, scenes) {
@@ -126,29 +145,51 @@ function wrappedLines(ctx, text, maxWidth) {
   }
   return result;
 }
-export function textLayout(ctx, scene, key, width, height) {
+export function captionLayout(ctx, caption, width, height) {
   // Reference size follows the shorter edge, so all three aspect ratios remain readable.
-  let size = scene.font * Math.min(width, height) / 540;
+  let size = caption.font * Math.min(width, height) / 540;
   const maxWidth = width * .9, maxHeight = height * .4;
   let lines;
-  do { ctx.font = `900 ${size}px Impact, "Arial Black", "Microsoft YaHei", sans-serif`; lines = wrappedLines(ctx, scene[key], maxWidth); if (lines.length * size * 1.2 <= maxHeight || size <= 10) break; size -= 1; } while (true);
+  do { ctx.font = `900 ${size}px Impact, "Arial Black", "Microsoft YaHei", sans-serif`; lines = wrappedLines(ctx, caption.text, maxWidth); if (lines.length * size * 1.2 <= maxHeight || size <= 10) break; size -= 1; } while (true);
   const lineHeight = size * 1.2, textWidth = Math.max(0, ...lines.map(l => ctx.measureText(l).width));
-  const x = scene[key + 'X'] * width, y = scene[key + 'Y'] * height;
+  const x = caption.x * width, y = caption.y * height;
   return { size, lines, lineHeight, x, y, bounds: { x: x - textWidth / 2 - 10, y: y - size * .6 - 6, w: textWidth + 20, h: lines.length * lineHeight + 12 } };
 }
-function drawCaption(ctx, scene, key, width, height) {
-  if (!scene[key]) return;
-  const layout = textLayout(ctx, scene, key, width, height);
+function drawCaption(ctx, caption, local, width, height) {
+  if (!caption.text || local < caption.start || local >= caption.end) return;
+  const layout = captionLayout(ctx, caption, width, height);
   ctx.save(); ctx.font = `900 ${layout.size}px Impact, "Arial Black", "Microsoft YaHei", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
-  if (scene.style === 'box') { ctx.fillStyle = '#111111de'; ctx.fillRect(layout.bounds.x, layout.bounds.y, layout.bounds.w, layout.bounds.h); }
-  ctx.strokeStyle = '#181018'; ctx.lineWidth = Math.max(2, layout.size * .11); ctx.fillStyle = scene.style === 'yellow' ? '#ffe23e' : '#ffffff';
-  layout.lines.forEach((line, i) => { if (scene.style !== 'box') ctx.strokeText(line, layout.x, layout.y + i * layout.lineHeight); ctx.fillText(line, layout.x, layout.y + i * layout.lineHeight); }); ctx.restore();
+  if (caption.style === 'box') { ctx.fillStyle = '#111111de'; ctx.fillRect(layout.bounds.x, layout.bounds.y, layout.bounds.w, layout.bounds.h); }
+  ctx.strokeStyle = '#181018'; ctx.lineWidth = Math.max(2, layout.size * .11); ctx.fillStyle = caption.style === 'yellow' ? '#ffe23e' : '#ffffff';
+  layout.lines.forEach((line, i) => { if (caption.style !== 'box') ctx.strokeText(line, layout.x, layout.y + i * layout.lineHeight); ctx.fillText(line, layout.x, layout.y + i * layout.lineHeight); }); ctx.restore();
 }
-export function keyGreenPixels(data, strength) {
-  const threshold = 75 - clamp(strength, 0, 100) * .6;
+export function keyGreenPixels(data, strength, width = 0, height = 0) {
+  const amount = clamp(strength, 0, 100) / 100;
+  const threshold = 48 - amount * 43;
+  const softness = 48 - amount * 22;
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i], g = data[i+1], b = data[i+2], dominance = g - Math.max(r, b);
-    if (g > 50 && dominance > threshold) { const alpha = 1 - clamp((dominance - threshold) / 35, 0, 1); data[i+3] = Math.round(data[i+3] * alpha); if (alpha > 0) data[i+1] = Math.min(g, Math.max(r,b) + threshold); }
+    if (g > 36 && g > r * 1.035 && g > b * 1.035 && dominance > threshold) {
+      const matte = clamp((dominance - threshold) / softness, 0, 1) * clamp((g - 36) / 70, 0, 1);
+      const key = clamp(matte * (.55 + amount * .55), 0, 1);
+      data[i+3] = Math.round(data[i+3] * (1 - key));
+    }
+    if (amount > .35 && dominance > 0) {
+      const spill = clamp((dominance - threshold * .15) / 34, 0, 1) * amount;
+      const neutral = Math.round((r + b) / 2);
+      data[i+1] = Math.round(g * (1 - spill) + neutral * spill);
+    }
+  }
+  if (amount > .7 && width * height * 4 === data.length) {
+    const alpha = new Uint8ClampedArray(width * height);
+    for (let p = 0; p < alpha.length; p++) alpha[p] = data[p * 4 + 3];
+    const edgeFade = .82 - (amount - .7) * .9;
+    for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
+      const p = y * width + x;
+      if (!alpha[p]) continue;
+      const transparentNeighbors = (alpha[p - 1] < 8) + (alpha[p + 1] < 8) + (alpha[p - width] < 8) + (alpha[p + width] < 8);
+      if (transparentNeighbors) data[p * 4 + 3] = Math.round(data[p * 4 + 3] * Math.max(.38, edgeFade - transparentNeighbors * .08));
+    }
   }
 }
 function drawCat(ctx, cat, local, width, height, keyCache, quality) {
@@ -171,7 +212,7 @@ function drawCat(ctx, cat, local, width, height, keyCache, quality) {
     if (cache.tag !== tag) {
       if (cache.canvas.width !== fw || cache.canvas.height !== fh) { cache.canvas.width = fw; cache.canvas.height = fh; }
       cache.ctx.clearRect(0, 0, fw, fh); cache.ctx.drawImage(source, sx, sy, sw, sh, 0, 0, fw, fh);
-      const pixels = cache.ctx.getImageData(0, 0, fw, fh); keyGreenPixels(pixels.data, cat.chromaStrength); cache.ctx.putImageData(pixels, 0, 0); cache.tag = tag;
+      const pixels = cache.ctx.getImageData(0, 0, fw, fh); keyGreenPixels(pixels.data, cat.chromaStrength, fw, fh); cache.ctx.putImageData(pixels, 0, 0); cache.tag = tag;
     }
     source = cache.canvas; sourceRect = [0, 0, cache.canvas.width, cache.canvas.height];
   }
@@ -182,7 +223,7 @@ function drawScene(ctx, scene, local, width, height, keyCache, quality) {
   ctx.fillStyle = scene.background; ctx.fillRect(0, 0, width, height);
   if (scene.backgroundAsset) { const bg=scene.backgroundAsset, cover=Math.max(width/bg.width,height/bg.height); ctx.drawImage(bg.element,(width-bg.width*cover)/2,(height-bg.height*cover)/2,bg.width*cover,bg.height*cover); }
   for (const cat of scene.cats) drawCat(ctx, cat, local, width, height, keyCache, quality);
-  drawCaption(ctx, scene, 'top', width, height); drawCaption(ctx, scene, 'bottom', width, height);
+  for (const caption of scene.captions || []) drawCaption(ctx, caption, local, width, height);
 }
 export class Renderer {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.buffer = document.createElement('canvas'); this.bufferCtx = this.buffer.getContext('2d'); this.keyCache = new Map(); }

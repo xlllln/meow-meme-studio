@@ -1,3 +1,4 @@
 .sites-runtime/
 node_modules/
 *.zip
+backgrounds/
