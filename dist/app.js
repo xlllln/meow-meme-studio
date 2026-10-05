@@ -1,6 +1,6 @@
 import { dimensions, clamp, createCaption, createCat, createScene, loadAsset, timelineAt, sceneStart, totalDuration, sourceTime, captionLayout, mediaBounds, Renderer, seekVideo, chooseWebmType } from './engine.js';
 import { AudioMixer } from './audio.js';
-import { openStore, listAssets, putAsset, deleteAsset, saveDraft, loadDraft } from './storage.js';
+import { openStore, listAssets, putAsset, deleteAsset, saveDraft, loadDraft, deleteDraft } from './storage.js';
 const $=id=>document.getElementById(id);
 const state={scenes:[],selected:0,selectedCat:0,selectedCaption:0,ratio:'9:16',duration:4,target:'media',time:0,playing:false,exporting:false,loading:true,musicId:'',musicVolume:.6,catPage:0,catFilter:'all'};
 const canvas=$('canvas'),renderer=new Renderer(canvas),mixer=new AudioMixer();
@@ -9,6 +9,8 @@ const current=()=>state.scenes[state.selected];
 const cat=()=>current()?.cats[state.selectedCat];
 const caption=()=>current()?.captions?.[state.selectedCaption]||null;
 const busy=()=>state.loading||state.exporting;
+const clearedProjectScenes=new Set(['47e2ee76-8b62-4e89-91bc-04000bcf64d3','3a57a534-def5-41cb-a179-4ae957a8991f','560e07c0-4cea-49c8-bcd7-a45702e4c64f']);
+const shouldClearPreviousProject=draft=>draft?.scenes?.length===clearedProjectScenes.size&&draft.scenes.every(scene=>clearedProjectScenes.has(scene.id));
 const labelTime=t=>{const v=Math.max(0,t),m=Math.floor(v/60),s=Math.floor(v%60);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');};
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function lock(){document.querySelectorAll('button,input,textarea,select').forEach(el=>el.disabled=busy());if(state.exporting){$('play').disabled=false;$('play').textContent='■';$('play').setAttribute('aria-label','取消导出');}if(!busy())syncForm();}
@@ -194,7 +196,9 @@ const sources=[['完整素材合集','BV1JNrxBgEdo'],['15 款香蕉猫','BV1EukF
 lock();
 try{
  persistent=await openStore();rows=[{id:'sample',name:'示例猫猫',kind:'image',category:'cat',tags:'猫 占位 示例',url:'./assets/sample-cat.jpg'},...await listAssets()];
- const draft=await loadDraft();const catIds=new Set(),bgIds=new Set();
+  let draft=await loadDraft(),clearedPreviousProject=false;
+  if(shouldClearPreviousProject(draft)){await deleteDraft();draft=null;clearedPreviousProject=true;}
+  const catIds=new Set(),bgIds=new Set();
  if(draft?.version===2){for(const s of draft.scenes){catIds.add(s.assetId);if(s.backgroundId)bgIds.add(s.backgroundId);}}
  if([3,4,5].includes(draft?.version)){for(const s of draft.scenes){for(const c of s.cats||[])catIds.add(c.assetId);if(s.backgroundId)bgIds.add(s.backgroundId);}}
  for(const row of rows){if(row.id==='sample'||row.category)continue;row.category=row.kind==='image'&&!catIds.has(row.id)?'background':'cat';if(bgIds.has(row.id))row.category='background';if(row.kind==='image')await putAsset(storedRow(row));}
@@ -212,7 +216,7 @@ try{
   if(missing)status(missing+' 个场景的素材缺失，请重新导入。',true);
  }
  if(!state.scenes.length){const s=createScene(await assetFor('sample'));s.cats[0].assetId='sample';state.scenes.push(s);}
- state.duration=totalDuration(state.scenes);$('scrub').max=state.duration;resize();choiceLists();timeline();ready=true;persist();status(draft?'猫片草稿已恢复，多只猫可以加入同一幕。':'素材库就位！每幕可以加入多只猫。');
+  state.duration=totalDuration(state.scenes);$('scrub').max=state.duration;resize();choiceLists();timeline();ready=true;persist();status(draft?'猫片草稿已恢复，多只猫可以加入同一幕。':clearedPreviousProject?'之前剪过的猫片已清空，猫 Meme 素材和背景都已保留。':'素材库就位！每幕可以加入多只猫。');
 }catch(e){status('素材库暂时无法读取：'+e.message,true);}finally{state.loading=false;lock();if(current())await goTo(sceneStart(state.scenes,state.selected));}
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&!state.exporting)stop();});
 window.addEventListener('pagehide',()=>{cancelExport?.();stop();if(ready)void saveDraft(snapshot());state.scenes.forEach(releaseScene);mixer.clearMusic();rows.forEach(r=>{if(r.thumbUrl?.startsWith('blob:'))URL.revokeObjectURL(r.thumbUrl);});if(outputUrl)URL.revokeObjectURL(outputUrl);});

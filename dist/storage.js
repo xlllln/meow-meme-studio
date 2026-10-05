@@ -7,3 +7,4 @@ export const putAsset=row=>db?transaction('assets','readwrite',s=>s.put(row)):Pr
 export const deleteAsset=id=>db?transaction('assets','readwrite',s=>s.delete(id)):Promise.resolve(memory.assets.delete(id));
 export const saveDraft=project=>db?transaction('drafts','readwrite',s=>s.put(project,'current')):Promise.resolve(memory.project=project);
 export const loadDraft=()=>db?transaction('drafts','readonly',s=>s.get('current')):Promise.resolve(memory.project);
+export const deleteDraft=()=>db?transaction('drafts','readwrite',s=>s.delete('current')):Promise.resolve(memory.project=null);
