@@ -2,6 +2,12 @@
 
 轻量级中文猫 Meme 完整视频剪辑台。无需后端或第三方安装依赖；素材、声音、草稿和导出均在浏览器中处理，上传素材不会发送到服务器。
 
+## 在线使用
+
+GitHub Pages：<https://xlllln.github.io/meow-meme-studio/>
+
+GitHub Pages 与 ChatGPT Sites 是两个不同的网站地址，各自拥有独立的浏览器存储。首次打开 GitHub Pages 版本时，素材库和创作草稿为空，不会带入以前在其他地址保存的创作记录。
+
 ## 启动
 
 安装 Node.js 18 或更高版本，在本目录运行：

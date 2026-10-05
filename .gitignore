@@ -1,4 +1,5 @@
 .sites-runtime/
+.openai/
 node_modules/
 *.zip
 backgrounds/
