@@ -23,10 +23,11 @@ function waitFor(element, event, fail = 'error') {
     element.addEventListener(event, done, { once: true }); element.addEventListener(fail, bad, { once: true });
   });
 }
-export async function loadAsset(fileOrUrl, name = '示例猫猫') {
+export async function loadAsset(fileOrUrl, name = '示例猫猫', mimeHint = '') {
   const file = typeof fileOrUrl !== 'string' ? fileOrUrl : null;
   if (file && file.size > 200 * 1024 * 1024) throw new Error('单个素材请控制在 200 MB 以内；大文件可以先压缩再导入。');
-  const type = file?.type || 'image/jpeg';
+  const inferredType = typeof fileOrUrl === 'string' && /\.mp4(?:$|[?#])/i.test(fileOrUrl) ? 'video/mp4' : typeof fileOrUrl === 'string' && /\.webm(?:$|[?#])/i.test(fileOrUrl) ? 'video/webm' : 'image/jpeg';
+  const type = file?.type || mimeHint || inferredType;
   if (file && !/^(image\/|video\/)/.test(type)) throw new Error('请上传图片、GIF 或短视频素材。');
   const url = file ? URL.createObjectURL(file) : fileOrUrl;
   let element, frames = [];
@@ -59,8 +60,9 @@ export async function loadAsset(fileOrUrl, name = '示例猫猫') {
       const ready = waitFor(element, 'loadeddata'); element.src = url; element.load(); await ready;
       if (!Number.isFinite(element.duration) || element.duration <= 0) throw new Error('无法确定视频时长，请换一份完整的视频文件。');
       if (element.videoWidth * element.videoHeight > 8_300_000) throw new Error('视频分辨率过大，请先压缩到 4K 以内。');
-      const analysis = analyzeBackdrop(element, element.videoWidth, element.videoHeight, file.name);
-      return { kind: 'video', name: file.name, url, element, width: element.videoWidth, height: element.videoHeight, duration: element.duration, ...analysis, release() { element.pause(); element.removeAttribute('src'); element.load(); URL.revokeObjectURL(url); } };
+      const assetName = file?.name || name;
+      const analysis = analyzeBackdrop(element, element.videoWidth, element.videoHeight, assetName);
+      return { kind: 'video', name: assetName, url, element, width: element.videoWidth, height: element.videoHeight, duration: element.duration, ...analysis, release() { element.pause(); element.removeAttribute('src'); element.load(); if (file) URL.revokeObjectURL(url); } };
     }
     element = new Image(); const ready = waitFor(element, 'load'); element.src = url; await ready;
     if (element.naturalWidth * element.naturalHeight > 32_000_000) throw new Error('图片分辨率过大，请先缩小到 3200 万像素以内。');

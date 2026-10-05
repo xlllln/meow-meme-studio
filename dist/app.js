@@ -60,6 +60,8 @@ function thumbUrl(row){return row.thumbUrl||(row.thumbUrl=row.file?URL.createObj
 const filterRules={emotion:/笑|开心|happy|哭|委屈|愤怒|生气|震惊|惊吓|疑惑|害羞|忧|呕吐|紧张|尖叫|大叫|怒吼|严肃|呆滞|瞌睡|昏睡/i,action:/跳舞|跑步|摇|旋转|开车|敲|吃|喝|打电话|工作|按摩|唱歌|吹口哨|举手|走路|自拍|亲亲|求饶|打哈欠|啃|骑摩托|磨指甲/i,role:/香蕉猫|huh|doge|企鹅|山羊|仓鼠|鼠鼠|巴哥|柴犬|土拨鼠|痞老板|cheems/i,sound:/有声|唱歌|叫|声音|音乐|歌/i,silent:/无声/i,green:/绿幕|green.?screen/i};
 function inferredTags(name=''){return Object.entries(filterRules).filter(([,rule])=>rule.test(name)).map(([key])=>key);}
 function normalizedName(name=''){return name.replace(/\.[^.]+$/,'').replace(/\(1\)$/,'').replace(/【高清(?:无水印)?】/g,'').trim().toLowerCase();}
+function libraryKey(row){const name=row.category==='background'?friendlyBackgroundName(row.name):row.name;return row.category+':'+normalizedName(name);}
+async function builtinLibrary(){try{const response=await fetch('./assets/library/manifest.json');if(!response.ok)return[];const data=await response.json();return[...(data.cats||[]),...(data.backgrounds||[])].map(row=>({...row,builtin:true,tags:[row.tags||'',...inferredTags(row.name)].filter(Boolean).join(' ')}));}catch{return[];}}
 function friendlyBackgroundName(name=''){
  const extension=(name.match(/\.[^.]+$/)||[''])[0],base=name.slice(0,name.length-extension.length).replace(/^AI[-_\s]*/i,'').trim();
  const aliases={'教室':'学校教室','卧室夜晚':'夜晚卧室','学校厕所':'学校卫生间','学校食堂':'学校食堂'};
@@ -80,11 +82,11 @@ function library(){
    const item=document.createElement('article');item.className='library-item';
    const canThumb=row.file||row.url,visual=document.createElement(row.kind==='audio'||!canThumb?'span':row.kind==='video'?'video':'img');visual.className='library-thumb';if(row.kind==='audio'||!canThumb)visual.textContent=row.kind==='audio'?'♫':'▶';else{visual.src=thumbUrl(row);if(row.kind==='video'){visual.muted=true;visual.preload='metadata';}}
    const body=document.createElement('div'),title=document.createElement('strong'),meta=document.createElement('small');body.className='library-copy';title.textContent=row.name;meta.textContent=({image:'图片',gif:'GIF',video:'视频',audio:'音频'}[row.kind])+(row.duration?' · '+labelTime(row.duration):'');body.append(title,meta);item.append(visual,body);
-   if(row.id!=='sample'){const tags=document.createElement('input');tags.value=row.tags||'';tags.placeholder='标签：卧室 / 开心…';tags.setAttribute('aria-label',row.name+'的标签');tags.onchange=()=>{row.tags=tags.value.slice(0,120);void putAsset(storedRow(row)).catch(e=>status(e.message,true));};item.append(tags);}
+   if(row.id!=='sample'&&!row.builtin){const tags=document.createElement('input');tags.value=row.tags||'';tags.placeholder='标签：卧室 / 开心…';tags.setAttribute('aria-label',row.name+'的标签');tags.onchange=()=>{row.tags=tags.value.slice(0,120);void putAsset(storedRow(row)).catch(e=>status(e.message,true));};item.append(tags);}
    const actions=document.createElement('div');actions.className='library-actions';const action=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{if(!busy())void fn();};actions.append(b);};
    if(category==='cat'){if(row.kind!=='audio'){action('＋ 加入本幕',()=>insertCat(row.id,'add'));action('新建一幕',()=>insertCat(row.id,'new'));action('替换选中猫',()=>insertCat(row.id,'replace'));}if(row.kind==='video'||row.kind==='audio')action('♫ 全片原声',()=>setMusic(row.id));}
    else action('设为本幕背景',()=>setBackground(row.id));
-   if(row.id!=='sample'){
+   if(row.id!=='sample'&&!row.builtin){
     if(row.kind==='image')action(category==='cat'?'移到背景区':'移到猫区',async()=>{row.category=category==='cat'?'background':'cat';try{await putAsset(storedRow(row));library();choiceLists();}catch(e){row.category=category;status(e.message,true);}});
     action('移出素材库',async()=>{if(state.scenes.some(s=>s.backgroundId===row.id||s.cats.some(c=>c.assetId===row.id))||state.musicId===row.id)return status('这份素材还在故事里使用，请先替换相应猫猫或背景。',true);try{await deleteAsset(row.id);if(row.thumbUrl?.startsWith('blob:'))URL.revokeObjectURL(row.thumbUrl);rows=rows.filter(r=>r.id!==row.id);library();choiceLists();status('素材已移出此浏览器，原始文件不受影响。');}catch(e){status(e.message,true);}});
    }
@@ -94,7 +96,7 @@ function library(){
   if(category==='cat'&&items.length){$('cat-page').textContent=`第 ${state.catPage+1} / ${totalPages} 页`;$('cat-prev').disabled=state.catPage===0;$('cat-next').disabled=state.catPage>=totalPages-1;$('cat-pager').hidden=totalPages<=1;}
  }
 }
-async function assetFor(id){const row=rows.find(r=>r.id===id);if(!row)throw new Error('找不到原素材，请重新导入。');let source=row.file||row.url;if(!source&&row.handle){try{source=await row.handle.getFile();}catch{throw new Error('需要重新关联本地热门猫文件夹。');}}if(!source)throw new Error('找不到原素材，请重新导入。');return loadAsset(source,row.name);}
+async function assetFor(id){const row=rows.find(r=>r.id===id);if(!row)throw new Error('找不到原素材，请重新导入。');let source=row.file||row.url;if(!source&&row.handle){try{source=await row.handle.getFile();}catch{throw new Error('需要重新关联本地热门猫文件夹。');}}if(!source)throw new Error('找不到原素材，请重新导入。');return loadAsset(source,row.name,row.mime||'');}
 async function insertCat(id,mode){
  if(busy())return;const row=rows.find(r=>r.id===id);if(!row||row.category!=='cat'||row.kind==='audio')return;stop();state.loading=true;lock();
  try{const asset=await assetFor(id),newCat=createCat(asset,id);newCat.chroma=asset.autoChroma||/绿幕|green.?screen/i.test(asset.name);newCat.chromaStrength=100;
@@ -195,7 +197,7 @@ const sources=[['完整素材合集','BV1JNrxBgEdo'],['15 款香蕉猫','BV1EukF
 [['夸克：完整素材包','https://pan.quark.cn/s/9e1bcf133e40'],...sources.map(([name,bv])=>['B站：'+name,'https://www.bilibili.com/video/'+bv])].forEach(([name,url])=>{const a=document.createElement('a');a.href=url;a.textContent=name+' ↗';a.target='_blank';a.rel='noopener';$('sources').append(a);});
 lock();
 try{
- persistent=await openStore();rows=[{id:'sample',name:'示例猫猫',kind:'image',category:'cat',tags:'猫 占位 示例',url:'./assets/sample-cat.jpg'},...await listAssets()];
+  persistent=await openStore();const localRows=await listAssets(),builtins=await builtinLibrary(),localNames=new Set(localRows.map(libraryKey));rows=[{id:'sample',name:'示例猫猫',kind:'image',category:'cat',tags:'猫 占位 示例',url:'./assets/sample-cat.jpg'},...localRows,...builtins.filter(row=>!localNames.has(libraryKey(row)))];
   let draft=await loadDraft(),clearedPreviousProject=false;
   if(shouldClearPreviousProject(draft)){await deleteDraft();draft=null;clearedPreviousProject=true;}
   const catIds=new Set(),bgIds=new Set();
