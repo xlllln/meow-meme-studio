@@ -6,7 +6,7 @@
 
 GitHub Pages：<https://xlllln.github.io/meow-meme-studio/>
 
-GitHub Pages 与 ChatGPT Sites 是两个不同的网站地址，各自拥有独立的浏览器存储。旧 ChatGPT Sites 地址会保留已经关联的猫 Meme 素材和背景，只清空指定的旧剪辑草稿。首次打开 GitHub Pages 版本时，需要重新关联同一个本地素材文件夹；浏览器不会允许两个网站地址自动共享本地文件权限。
+GitHub Pages 与 ChatGPT Sites 是两个不同的网站地址，各自拥有独立的浏览器存储。旧 ChatGPT Sites 地址会保留已经关联的猫 Meme 素材和背景，只清空指定的旧剪辑草稿。首次打开 GitHub Pages 版本时，点击“关联本地素材文件夹”并选择 `D:\猫meme素材`；猫视频和“背景图”子目录会分别恢复到两个素材库。浏览器不会允许两个网站地址自动共享本地文件权限。
 
 ## 启动
 

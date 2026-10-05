@@ -121,11 +121,11 @@ async function linkedFiles(directory,path=''){
 }
 async function linkCatFolder(){
  if(busy())return;if(!window.showDirectoryPicker)return status('当前浏览器不支持关联文件夹，请用上面的“批量导入”按钮。',true);
- stop();state.loading=true;lock();let added=0,skipped=0,unsupported=0;
+ stop();state.loading=true;lock();let added=0,addedCats=0,addedBackgrounds=0,skipped=0,unsupported=0;
  try{const directory=await showDirectoryPicker({mode:'read'});const entries=await linkedFiles(directory),known=new Set(rows.map(r=>r.file?fingerprint(r.file):r.fingerprint).filter(Boolean));
   await navigator.storage?.persist?.();
-  for(let i=0;i<entries.length;i++){const {handle,path}=entries[i],file=await handle.getFile(),kind=kindForFile(file);status(`正在关联 ${i+1} / ${entries.length}：${file.name}`);if(!kind){unsupported++;continue;}if(file.size>220*1024*1024){unsupported++;continue;}const key=fingerprint(file);if(known.has(key)){skipped++;continue;}const tags=[path.replace(/\/$/,''),...inferredTags(file.name)].filter(Boolean).join(' '),row={id:crypto.randomUUID(),handle,fingerprint:key,name:file.name,size:file.size,kind,duration:0,category:'cat',tags};await putAsset(row);rows.push(row);known.add(key);added++;}
-  state.catPage=0;library();choiceLists();status(`热门猫窝已关联：新增 ${added} 个，跳过 ${skipped} 个重复文件${unsupported?'，忽略 '+unsupported+' 个不支持文件':''}。素材继续保存在本地文件夹，不会复制 3.8 GB 到浏览器。`);
+  for(let i=0;i<entries.length;i++){const {handle,path}=entries[i],file=await handle.getFile(),kind=kindForFile(file);status(`正在关联 ${i+1} / ${entries.length}：${file.name}`);if(!kind){unsupported++;continue;}if(file.size>220*1024*1024){unsupported++;continue;}const key=fingerprint(file);if(known.has(key)){skipped++;continue;}const category=kind==='image'&&/(^|\/)(背景图?|backgrounds?)(\/|$)/i.test(path)?'background':'cat',tags=[path.replace(/\/$/,''),...inferredTags(file.name)].filter(Boolean).join(' '),row={id:crypto.randomUUID(),handle,fingerprint:key,name:category==='background'?friendlyBackgroundName(file.name):file.name,size:file.size,kind,duration:0,category,tags};await putAsset(row);rows.push(row);known.add(key);added++;if(category==='background')addedBackgrounds++;else addedCats++;}
+  state.catPage=0;library();choiceLists();status(`素材文件夹已关联：新增 ${addedCats} 个猫素材、${addedBackgrounds} 张背景，跳过 ${skipped} 个重复文件${unsupported?'，忽略 '+unsupported+' 个不支持文件':''}。素材仍保存在本地文件夹，不会复制到浏览器。`);
  }catch(e){if(e?.name!=='AbortError')status('关联文件夹失败：'+e.message,true);}
  finally{state.loading=false;lock();}
 }
