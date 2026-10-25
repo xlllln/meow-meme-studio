@@ -12,4 +12,4 @@ http.createServer(async (req, res) => {
     if (!candidate.startsWith(root + path.sep)) { res.writeHead(403).end('Forbidden'); return; }
     const data = await readFile(candidate); res.writeHead(200, { 'Content-Type': types[path.extname(candidate)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }); res.end(data);
   } catch { res.writeHead(404).end('Not found'); }
-}).listen(port, '127.0.0.1', () => console.log(`喵片制造所: http://localhost:${port}`));
+}).listen(port, '127.0.0.1', () => console.log(`Memeow Studio: http://localhost:${port}`));

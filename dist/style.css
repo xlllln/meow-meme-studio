@@ -17,3 +17,23 @@
 .library-divider{height:1px;background:var(--line);margin:24px 0}.background-upload{background:#f9f7ff;border-color:#cabce7}.background-upload .upload-icon{background:#ebe3fb;color:#8e66c0}.media-panel .library{max-height:310px}.cat-layers{display:flex;flex-direction:column;gap:7px;margin:12px 0}.cat-layers button{width:100%;border:1px solid var(--line);border-radius:9px;background:#fff9fc;padding:9px 11px;text-align:left;color:#67475b;font-size:13px}.cat-layers button.active{border:2px solid var(--pink);background:#ffe8f1;padding:8px 10px;font-weight:bold}.cat-layers small{display:block;color:#956f87;font-weight:normal;margin-top:4px}.layer-actions{margin:10px 0 16px}.layer-actions button{flex:1}.subsection h3 span{color:var(--pink);font-size:12px;font-weight:normal}.background-library .library-actions button:first-child{background:#eae3fb;border-color:#cfc0eb;color:#7957a5}
 .subsection-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.subsection-heading h3{margin:0}.subsection-heading button{border:1px solid #e4bfd3;background:#fff3f9;color:#b52c6a;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700}.caption-list{display:flex;flex-direction:column;gap:7px;margin:14px 0}.caption-list button{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:9px;background:#fff;padding:9px 10px;text-align:left;color:#705566}.caption-list button.active{border-color:var(--pink);background:#fff1f7;color:#b52767}.caption-list strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.caption-list small{font-size:10px;color:#9a7a8e}.caption-actions{margin-top:0}.caption-actions button{flex:1}.caption-actions button:last-child{color:#a5214a}#caption-editor[hidden]{display:none}
 
+
+/* Memeow Studio brand and editor-only object controls. */
+.brand{font-weight:700;font-size:23px;letter-spacing:-.5px;gap:8px}
+.logo{background:none;color:var(--pink);border-radius:0;font-size:28px;line-height:1;width:28px;transform:none}
+.intro h1{font-size:28px;margin:0;letter-spacing:-.6px}
+.cat-tools{position:absolute;z-index:3;display:flex;gap:3px;align-items:center;max-width:calc(100% - 16px);padding:4px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 15px #30263020}
+.cat-tools[hidden],#empty-cats-note[hidden]{display:none}
+.cat-tools button{min-height:36px;padding:7px 12px;border:0;border-radius:6px;background:transparent;color:#302630;font-size:13px;white-space:nowrap}
+.cat-tools button:hover,.cat-tools button[aria-pressed=true]{background:#fff0f6;color:#bc306c}
+.cat-tools #cat-delete{color:#a5214a}
+.copy-dialog{width:min(360px,calc(100% - 32px));padding:24px;border:1px solid var(--line);border-radius:16px;color:#302630;box-shadow:0 12px 48px #30263030}
+.copy-dialog::backdrop{background:#30263055}
+.copy-dialog h2{margin-bottom:20px}
+.sound-choice{display:flex;align-items:flex-start;gap:10px;margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:9px;font-size:14px;cursor:pointer}
+.sound-choice input{accent-color:var(--pink);margin-top:2px}
+.sound-choice small{display:block;margin-top:6px;color:#88717f;font-size:12px;line-height:1.5}
+.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.dialog-actions button{border:1px solid var(--line);border-radius:8px;padding:9px 16px;background:#fff;cursor:pointer}
+.dialog-actions .primary{background:var(--pink);border-color:var(--pink);color:#fff;box-shadow:none}
+@media(max-width:600px){.brand{font-size:18px;gap:5px}.logo{width:23px;font-size:24px}.intro h1{font-size:23px}.cat-tools button{min-height:44px;padding:8px 12px}}

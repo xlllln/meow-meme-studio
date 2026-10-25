@@ -7,6 +7,12 @@ export function createCat(asset, assetId = null) {
   const crop = asset.autoCrop || { top: 0, right: 0, bottom: 0, left: 0 };
   return { id: crypto.randomUUID(), asset, assetId, trimStart: 0, trimEnd: asset.duration || 4, loop: true, volume: 1, originalSound: true, chroma: Boolean(asset.autoChroma), chromaStrength: 100, autoCrop: Boolean(asset.autoChroma), crop: { ...crop }, cropVersion: 2, flip: false, x: .5, y: .5, scale: 1, animation: 'zoom' };
 }
+export function cloneCatLayer(cat, asset, sound = 'single') {
+  const { asset: originalAsset, id, ...settings } = cat;
+  const copy = { ...structuredClone(settings), id: crypto.randomUUID(), asset };
+  if (asset.kind === 'video' && sound === 'single') copy.originalSound = false;
+  return copy;
+}
 export function createScene(asset, index = 0) {
   const duration = asset.kind === 'video' ? asset.duration : 4;
   return { id: crypto.randomUUID(), cats: [createCat(asset)], duration, backgroundId: null, backgroundAsset: null, captions: [
@@ -194,13 +200,40 @@ export function keyGreenPixels(data, strength, width = 0, height = 0) {
     }
   }
 }
-function drawCat(ctx, cat, local, width, height, keyCache, quality) {
-  const sourceAsset = cat.asset;
+function catTransform(cat, local, width, height) {
   const p = clamp(local / .55, 0, 1);
   let scale = 1, offsetX = 0, offsetY = 0;
   if (cat.animation === 'zoom') scale = 1 + .07 * clamp(local / 3, 0, 1);
   if (cat.animation === 'shake' && p < 1) { offsetX = Math.sin(local * 85) * width * .016 * (1 - p); offsetY = Math.cos(local * 64) * height * .008 * (1 - p); }
   if (cat.animation === 'pop') { const q = p - 1; scale = 1 + 2.70158 * q ** 3 + 1.70158 * q ** 2; offsetY = (1 - p) * height * .12; }
+  return { scale, x: cat.x * width + offsetX, y: cat.y * height + offsetY };
+}
+export function renderedMediaBounds(cat, local, width, height) {
+  const bounds = mediaBounds(cat, width, height), transform = catTransform(cat, local, width, height);
+  const w = bounds.w * Math.abs(transform.scale), h = bounds.h * Math.abs(transform.scale);
+  return { x: transform.x - w / 2, y: transform.y - h / 2, w, h };
+}
+export function editingCatBounds(state, time, width, height) {
+  if (state.loading || state.exporting || state.playing || state.target !== 'media' || !state.scenes.length) return null;
+  const at = timelineAt(time, state.duration, state.scenes);
+  if (at.index !== state.selected) return null;
+  const cat = state.scenes[at.index].cats[state.selectedCat];
+  if (!cat) return null;
+  const bounds = renderedMediaBounds(cat, at.local, width, height);
+  return bounds.w > .001 && bounds.h > .001 ? bounds : null;
+}
+// Coordinates here are CSS pixels relative to the preview stage, never video pixels.
+export function catToolsPosition(bounds, stage, tools, gap = 8) {
+  const left = Math.max(gap, bounds.x), right = Math.min(stage.w - gap, bounds.x + bounds.w);
+  const top = Math.max(gap, bounds.y), bottom = Math.min(stage.h - gap, bounds.y + bounds.h);
+  if (right <= left || bottom <= top) return null;
+  const x = clamp((left + right - tools.w) / 2, gap, Math.max(gap, stage.w - tools.w - gap));
+  let y = top - tools.h - gap;
+  if (y < gap) y = bottom + gap;
+  return { x, y: clamp(y, gap, Math.max(gap, stage.h - tools.h - gap)) };
+}
+function drawCat(ctx, cat, local, width, height, keyCache, quality) {
+  const sourceAsset = cat.asset, transform = catTransform(cat, local, width, height);
   const bounds = mediaBounds(cat, width, height);
   const frame = frameFor(sourceAsset, sourceTime(cat, local)); let source = frame.source;
   const crop = cat.autoCrop === false ? { top: 0, right: 0, bottom: 0, left: 0 } : (cat.crop || sourceAsset.autoCrop || { top: 0, right: 0, bottom: 0, left: 0 });
@@ -218,7 +251,7 @@ function drawCat(ctx, cat, local, width, height, keyCache, quality) {
     }
     source = cache.canvas; sourceRect = [0, 0, cache.canvas.width, cache.canvas.height];
   }
-  ctx.save(); ctx.translate(cat.x * width + offsetX, cat.y * height + offsetY); ctx.scale(cat.flip ? -scale : scale, scale);
+  ctx.save(); ctx.translate(transform.x, transform.y); ctx.scale(cat.flip ? -transform.scale : transform.scale, transform.scale);
   ctx.drawImage(source, ...sourceRect, -bounds.w / 2, -bounds.h / 2, bounds.w, bounds.h); ctx.restore();
 }
 function drawScene(ctx, scene, local, width, height, keyCache, quality) {
@@ -242,6 +275,16 @@ export class Renderer {
       if (scene.transition === 'slide') { ctx.drawImage(this.buffer, w * (1 - at.progress), 0); }
       if (scene.transition === 'flash') { if (at.progress > .5) ctx.drawImage(this.buffer, 0, 0); ctx.fillStyle = `rgba(255,255,255,${Math.sin(at.progress * Math.PI)})`; ctx.fillRect(0, 0, w, h); }
       ctx.restore();
+    }
+    // Editor UI is drawn after compositing and is excluded from every export frame.
+    const bounds = editingCatBounds(state, time, w, h);
+    if (bounds) {
+      const unit = w / (this.canvas.clientWidth || w);
+      ctx.save(); ctx.setLineDash([6 * unit, 4 * unit]);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4 * unit;
+      ctx.strokeRect(bounds.x, bounds.y, bounds.w, bounds.h);
+      ctx.strokeStyle = '#e8498b'; ctx.lineWidth = 2 * unit;
+      ctx.strokeRect(bounds.x, bounds.y, bounds.w, bounds.h); ctx.restore();
     }
     return at;
   }
